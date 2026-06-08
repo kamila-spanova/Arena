@@ -5,6 +5,7 @@ from launch_ros.substitutions import FindPackageShare
 from arena_bringup.substitutions import LaunchArgument, SelectAction
 
 from task_generator.constants import Constants
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -21,6 +22,11 @@ def generate_launch_description():
 
     launch_human_simulator.add(
         Constants.HumanSimulator.DUMMY.value,
+        launch.actions.GroupAction([])
+    )
+
+    launch_human_simulator.add(
+        Constants.HumanSimulator.AUDITORY.value,
         launch.actions.GroupAction([])
     )
 
@@ -44,18 +50,44 @@ def generate_launch_description():
         )
     )
 
+    # launch_human_simulator.add(
+    #     Constants.HumanSimulator.ARENA.value,
+    #     launch.actions.IncludeLaunchDescription(
+    #         PathJoinSubstitution([
+    #             FindPackageShare('task_generator'),
+    #             'launch', 'human', 'arena_humansim', 'arena_humansim.launch.py',
+    #         ]),
+    #         launch_arguments={
+    #             'use_sim_time': 'true',
+    #             **namespace.dict
+    #         }.items(),
+    #     )
+    # )
     launch_human_simulator.add(
         Constants.HumanSimulator.ARENA.value,
-        launch.actions.IncludeLaunchDescription(
-            PathJoinSubstitution([
-                FindPackageShare('task_generator'),
-                'launch', 'human', 'arena_humansim', 'arena_humansim.launch.py',
-            ]),
-            launch_arguments={
-                'use_sim_time': 'true',
-                **namespace.dict
-            }.items(),
-        )
+        launch.actions.GroupAction([
+            launch.actions.IncludeLaunchDescription(
+                PathJoinSubstitution([
+                    FindPackageShare('task_generator'),
+                    'launch', 'human', 'arena_humansim', 'arena_humansim.launch.py',
+                ]),
+                launch_arguments={
+                    'use_sim_time': 'true',
+                    **namespace.dict
+                }.items(),
+            ),
+            Node(
+                package='task_generator',
+                executable='human_sound_playback',
+                name='human_sound_playback',
+                namespace=namespace.substitution,
+                output='screen',
+                parameters=[{
+                    'sound_events_topic': 'human_sound_events',
+                    'player_command': 'aplay',
+                }],
+            ),
+        ])
     )
 
     simulator = LaunchArgument(

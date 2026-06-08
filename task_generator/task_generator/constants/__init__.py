@@ -17,6 +17,7 @@ class Constants:
         HUNAV = "hunav"  # Added Hunavsim
         ISAAC = "isaac"
         ARENA = "arena"
+        AUDITORY = "auditory"
 
     class TaskMode:
         @enum.unique

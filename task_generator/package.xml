@@ -12,6 +12,7 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
 
   <exec_depend>arena_bringup</exec_depend>
@@ -20,6 +21,7 @@
   <exec_depend>arena_robots</exec_depend>
   <exec_depend>arena_simulation_setup</exec_depend>
   <exec_depend>task_generator_msgs</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-hypothesis</test_depend>

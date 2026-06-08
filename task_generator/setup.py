@@ -29,6 +29,10 @@ setup(
          existing('launch/human/hunav/*.launch.py')),
         (os.path.join('share', package_name, 'launch', 'human', 'arena_humansim'),
          existing('launch/human/arena_humansim/*.launch.py')),
+        (os.path.join('share', package_name, 'sounds'),
+         existing('sounds/*.wav')),
+        (os.path.join('share', package_name, 'launch', 'human', 'auditory'),
+         existing('launch/human/auditory/*.launch.py')),
     ],
     install_requires=['setuptools'],
     extras_require={
@@ -43,6 +47,7 @@ setup(
         'console_scripts': [
             'task_generator_node = task_generator.task_generator_node:main',
             'generate_map = task_generator.utils.map_generator:main',
+            'human_sound_playback = task_generator.simulators.human.audio_playback_node:main',
             # 'server = task_generator.server:main',
             # 'filewatcher = task_generator.filewatcher:main'
         ]

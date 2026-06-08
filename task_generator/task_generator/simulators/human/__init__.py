@@ -25,6 +25,8 @@ from task_generator.simulators.human.utils import (
     ObstacleLayer,
 )
 from visualization_msgs.msg import MarkerArray
+from std_msgs.msg import String
+from task_generator.simulators.human.auditory_events import AuditoryEventDetector
 
 
 class BaseHumanSimulator(NodeInterface, abc.ABC):
@@ -85,10 +87,35 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
                 depth=1,
             ),
         )
+        self._sound_events_publisher = self.node.create_publisher(
+            String,
+            self._namespace("human_sound_events"),
+            10,
+        )
+        self._auditory_events = AuditoryEventDetector(
+            self.publish_sound_event,
+            walking_speed_threshold=0.05,
+            footstep_interval_sec=0.45,
+            greeting_distance_m=1.5,
+            greeting_fov_deg=90.0,
+            greeting_cooldown_sec=5.0,
+        )
 
+    # def publish_arena_peds(self, msg: Pedestrians):
+    #     """Publish pedestrian states."""
+    #     self._arena_peds_publisher.publish(msg)
     def publish_arena_peds(self, msg: Pedestrians):
-        """Publish pedestrian states."""
+        """Publish pedestrian states and derive auditory events."""
         self._arena_peds_publisher.publish(msg)
+
+        now = self.node.sim_time
+        now_sec = float(now.sec) + float(now.nanosec) * 1e-9
+        self._auditory_events.update(msg, now_sec)
+
+    def publish_sound_event(self, event: str) -> None:
+        msg = String()
+        msg.data = event
+        self._sound_events_publisher.publish(msg)
 
     def publish_markers(self, markers: MarkerArray) -> None:
         """Publish a transient debug-overlay MarkerArray on `pedestrian_markers/extra`."""
@@ -629,3 +656,9 @@ async def arenasim(**kwargs: object) -> BaseHumanSimulator:
     from .arena_humansim.arena_humansim import ArenaHumanSimulator
 
     return await ArenaHumanSimulator.create(**kwargs)
+
+@HumanSimulatorRegistry.register(Constants.HumanSimulator.AUDITORY)
+async def auditorysim(**kwargs: object) -> BaseHumanSimulator:
+    from .auditory import AuditoryHumanSimulator
+
+    return AuditoryHumanSimulator(**kwargs)

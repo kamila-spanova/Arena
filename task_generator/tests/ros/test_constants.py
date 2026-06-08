@@ -122,3 +122,7 @@ def test_human_simulator_values_stable():
     assert HS.DUMMY.value == "dummy"
     assert HS.HUNAV.value == "hunav"
     assert HS.ISAAC.value == "isaac"
+
+def test_auditory_human_simulator_constant():
+    from task_generator.constants import Constants
+    assert Constants.HumanSimulator.AUDITORY.value == "auditory"
