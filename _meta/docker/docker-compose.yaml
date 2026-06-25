@@ -8,6 +8,8 @@ services:
       args:
         - gid=${HOST_GID}
         - uid=${HOST_UID}
+    devices:
+      - "/dev/snd:/dev/snd"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
@@ -19,6 +21,7 @@ services:
       - "$HOST_ARENA_WS_DIR/log:/opt/arena_ws/log"
       - "$HOST_ARENA_WS_DIR/.env:/opt/arena_ws/.env"
       - "$HOST_ARENA_DATA_DIR:/opt/arena_ws/data"
+      # - "${XDG_RUNTIME_DIR}/pulse/native:/tmp/pulse/native:ro"
     environment:
       - QT_X11_NO_MITSHM=1
       - TMPDIR=/tmp/shared
@@ -38,11 +41,14 @@ services:
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - CYCLONEDDS_URI=file:///opt/arena_ws/src/Arena/_meta/docker/cyclonedds.xml
       - FASTRTPS_DEFAULT_PROFILES_FILE=/opt/arena_ws/src/Arena/_meta/docker/fastdds.xml
+      # - PULSE_SERVER=unix:/tmp/pulse/native
+      - XDG_RUNTIME_DIR=/tmp/pulse
     env_file:
       - "$HOST_ARENA_WS_DIR/.env"
     user: "${HOST_UID}"
     group_add:
       - sudo
+      - audio
     network_mode: host
     command: ["bash"]
     stdin_open: true 

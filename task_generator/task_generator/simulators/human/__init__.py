@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import json
+import math
 import itertools
+from turtle import stamp
 import typing
 from collections.abc import Mapping, Sequence
 
 import attrs
 import rclpy.publisher
 import rclpy.qos
-from arena_people_msgs.msg import Pedestrians
+from arena_people_msgs.msg import Pedestrian, Pedestrians
 from arena_rclpy_mixins.registry import AsyncFactoryRegistry as Registry
 from arena_rclpy_mixins.shared import Namespace
 from arena_runtime._node import NodeInterface
@@ -24,10 +27,13 @@ from task_generator.simulators.human.utils import (
     KnownObstacles,
     ObstacleLayer,
 )
-from visualization_msgs.msg import MarkerArray
-from std_msgs.msg import String
+from visualization_msgs.msg import Marker, MarkerArray
 from task_generator.simulators.human.auditory_events import AuditoryEventDetector
-
+from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import Point
+from std_msgs.msg import ColorRGBA, String
+from task_generator_msgs.msg import SoundEvent
+from task_generator.auditory.qos_profiles import transient_event_qos
 
 class BaseHumanSimulator(NodeInterface, abc.ABC):
     _arena_peds_publisher: rclpy.publisher.Publisher
@@ -65,6 +71,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         self._known_doors = KnownObstacles[Door]()
         self._wall_counter = itertools.count()
         self._known_regions: dict[str, Region] = {}
+        self._sound_event_counter = itertools.count()
 
         self._arena_peds_publisher = self.node.create_publisher(Pedestrians, self._namespace("arena_peds"), 10)
         self._marker_publisher = self.node.create_publisher(
@@ -88,10 +95,21 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
             ),
         )
         self._sound_events_publisher = self.node.create_publisher(
-            String,
+            SoundEvent,
             self._namespace("human_sound_events"),
-            10,
+            transient_event_qos(),
         )
+        self._sound_marker_publisher = self.node.create_publisher(
+            MarkerArray,
+            self._namespace("human_sound_markers"),
+            rclpy.qos.QoSProfile(
+                reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
+                durability=rclpy.qos.DurabilityPolicy.VOLATILE,
+                history=rclpy.qos.HistoryPolicy.KEEP_LAST,
+                depth=10,
+            ),
+        )
+        self._sound_marker_counter = itertools.count()
         self._auditory_events = AuditoryEventDetector(
             self.publish_sound_event,
             walking_speed_threshold=0.05,
@@ -104,6 +122,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
     # def publish_arena_peds(self, msg: Pedestrians):
     #     """Publish pedestrian states."""
     #     self._arena_peds_publisher.publish(msg)
+
     def publish_arena_peds(self, msg: Pedestrians):
         """Publish pedestrian states and derive auditory events."""
         self._arena_peds_publisher.publish(msg)
@@ -112,10 +131,106 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         now_sec = float(now.sec) + float(now.nanosec) * 1e-9
         self._auditory_events.update(msg, now_sec)
 
-    def publish_sound_event(self, event: str) -> None:
-        msg = String()
-        msg.data = event
+    def publish_sound_event(self, sound_type: str, ped: Pedestrian) -> None:
+        sound_type = sound_type.strip()
+        if not sound_type:
+            return
+        
+        yaw = self._yaw_from_quaternion(ped.pose.orientation)
+        stamp = self.node.sim_time.to_msg()
+
+        msg = SoundEvent()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "map" 
+        msg.event_id = (f"{ped.id}:{stamp.sec}:{stamp.nanosec}:{next(self._sound_event_counter)}")
+        msg.source_agent_id = int(ped.id)
+        msg.source_agent_name = ped.name
+        msg.sound_type = sound_type
+        msg.label = sound_type
+        msg.asset_id = sound_type
+        msg.source_position = ped.pose.position
+        msg.source_yaw = float(yaw)
+        msg.semantic_tags = ['default'] #FIXME: add semantic tags
+        # msg.reference_distance_m = 1.0
+        # msg.directivity_factor = 0.0
+        msg.loop = False
+
+        default_sound_params = {"footstep": (45.0, 0.2), "greeting": (60.0, 1.0),"motor": (55.0, 0.5)} 
+
+        source_volume_db, duration_sec = default_sound_params.get(sound_type, (60.0, 1.0))
+        msg.source_volume_db = float(source_volume_db)
+        msg.duration.sec = int(duration_sec)
+        msg.duration.nanosec = int((duration_sec % 1.0) * 1_000_000_000)
+
         self._sound_events_publisher.publish(msg)
+        self._publish_sound_cone_marker(sound_type, ped)
+
+    def _publish_sound_cone_marker(self, event: str, ped: Pedestrian) -> None:
+        yaw = self._yaw_from_quaternion(ped.pose.orientation)
+
+        source_x = float(ped.pose.position.x)
+        source_y = float(ped.pose.position.y)
+
+        apex_offset = 0.15
+        cone_radius = 1.25
+        cone_angle = math.radians(70.0)
+        segments = 16
+
+        apex = Point(x=source_x + math.cos(yaw) * apex_offset, y=source_y + math.sin(yaw) * apex_offset, z=0.08)
+
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.node.sim_time.to_msg()
+        marker.ns = f"human_sound_{event}"
+        marker.id = next(self._sound_marker_counter)
+        marker.type = Marker.TRIANGLE_LIST
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 1.0
+        marker.scale.y = 1.0
+        marker.scale.z = 1.0
+        marker.lifetime = Duration(sec=1, nanosec=200_000_000)
+        marker.color = self._sound_marker_color(event)
+
+        arc_points: list[Point] = []
+        start_angle = yaw - cone_angle / 2.0
+        for i in range(segments + 1):
+            angle = start_angle + cone_angle * (i / segments)
+            arc_points.append(Point(x=source_x + math.cos(angle) * cone_radius, y=source_y + math.sin(angle) * cone_radius, z=0.08))
+
+        for left, right in zip(arc_points, arc_points[1:], strict=False):
+            marker.points.extend([apex, left, right])
+
+        outline = Marker()
+        outline.header = marker.header
+        outline.ns = f"human_sound_{event}_outline"
+        outline.id = next(self._sound_marker_counter)
+        outline.type = Marker.LINE_STRIP
+        outline.action = Marker.ADD
+        outline.pose.orientation.w = 1.0
+        outline.scale.x = 0.035
+        outline.lifetime = marker.lifetime
+        outline.color = ColorRGBA(r=marker.color.r, g=marker.color.g, b=marker.color.b, a=0.95)
+        outline.points = [apex, *arc_points, apex]
+
+        markers = MarkerArray()
+        markers.markers.extend([marker, outline])
+        self._sound_marker_publisher.publish(markers)
+
+    # TODO: add a method to publish sound events with arbitrary parameters (volume, duration, etc.)
+    @staticmethod
+    def _sound_marker_color(event: str) -> ColorRGBA:
+        if event == "greeting":
+            return ColorRGBA(r=0.2, g=0.75, b=1.0, a=0.35)
+        if event == "footstep":
+            return ColorRGBA(r=1.0, g=0.8, b=0.25, a=0.28)
+        return ColorRGBA(r=0.8, g=0.8, b=0.8, a=0.3)
+
+    @staticmethod
+    def _yaw_from_quaternion(q) -> float:
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
     def publish_markers(self, markers: MarkerArray) -> None:
         """Publish a transient debug-overlay MarkerArray on `pedestrian_markers/extra`."""

@@ -2,7 +2,7 @@ import os
 from collections import defaultdict
 from glob import glob
 
-from setuptools import find_packages, setup
+from setuptools import find_namespace_packages, setup
 
 package_name = 'task_generator'
 
@@ -13,9 +13,9 @@ def existing(*patterns):
 setup(
     name=package_name,
     version='0.0.0',
-    packages=find_packages(
+    packages=find_namespace_packages(
         where='.',
-        include=[f'{package_name}*']
+        include=[package_name, f'{package_name}.*']
     ),
     package_dir={'': '.'},
     data_files=[
@@ -32,9 +32,11 @@ setup(
         (os.path.join('share', package_name, 'sounds'),
          existing('sounds/*.wav')),
         (os.path.join('share', package_name, 'launch', 'human', 'auditory'),
-         existing('launch/human/auditory/*.launch.py')),
+         existing('launch/human/auditory/*.launch.py', 'launch/human/auditory/*.md')),
+        (os.path.join("share", package_name, "config", "auditory"),
+         existing("config/auditory/*.yaml")),
     ],
-    install_requires=['setuptools'],
+    install_requires=["setuptools", "numpy", "scipy", "sounddevice"],
     extras_require={
         'test': ['pytest>=7', 'hypothesis>=6'],
     },
@@ -48,6 +50,10 @@ setup(
             'task_generator_node = task_generator.task_generator_node:main',
             'generate_map = task_generator.utils.map_generator:main',
             'human_sound_playback = task_generator.simulators.human.audio_playback_node:main',
+            'sound_propagation_node = task_generator.auditory.sound_propagation_node:main',
+            'robot_sound_node = task_generator.auditory.robot_sound_node:main',
+            'robot_hearing_node = task_generator.auditory.robot_hearing_node:main',
+            'auditory_benchmark = task_generator.auditory.benchmark:main',
             # 'server = task_generator.server:main',
             # 'filewatcher = task_generator.filewatcher:main'
         ]

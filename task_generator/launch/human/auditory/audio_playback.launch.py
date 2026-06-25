@@ -11,9 +11,9 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "sound_events_topic": "human_sound_events",
-                "sound_dir": "/home/kameow/arena_ws/src/Arena/task_generator/sounds",
-                "player_command": "aplay",
-                "sound_map": '{"footstep": "footstep.wav", "greeting": "greeting.wav"}',
+                # "sound_dir": "task_generator/sounds",
+                # "asset_catalog": "task_generator/config/auditory/acoustic_assets.yaml",
+                # "sound_map": '{"footstep": "footstep.wav", "greeting": "greeting.wav"}',
             }],
         ),
     ])

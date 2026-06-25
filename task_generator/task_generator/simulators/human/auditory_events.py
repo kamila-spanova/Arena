@@ -9,7 +9,7 @@ from arena_people_msgs.msg import Pedestrian, Pedestrians
 class AuditoryEventDetector:
     def __init__(
         self,
-        emit: Callable[[str], None],
+        emit: Callable[[str, Pedestrian], None],
         *,
         walking_speed_threshold: float = 0.05,
         footstep_interval_sec: float = 0.45,
@@ -39,24 +39,23 @@ class AuditoryEventDetector:
                 self._maybe_emit_greeting(ped_a, ped_b, now_sec)
 
     def _is_walking(self, ped: Pedestrian) -> bool:
-        speed = math.hypot(ped.twist.linear.x, ped.twist.linear.y)
-        return speed > self._walking_speed_threshold
+        return math.hypot(ped.twist.linear.x, ped.twist.linear.y) > self._walking_speed_threshold
 
     def _maybe_emit_footstep(self, ped: Pedestrian, now_sec: float) -> None:
         last = self._last_footstep_by_ped.get(ped.id, -math.inf)
         if now_sec - last < self._footstep_interval_sec:
             return
-
         self._last_footstep_by_ped[ped.id] = now_sec
-        self._emit("footstep")
+        self._emit("footstep", ped)
 
-    def _maybe_emit_greeting(
-        self,
-        ped_a: Pedestrian,
-        ped_b: Pedestrian,
-        now_sec: float,
-    ) -> None:
-        if not self._sees(ped_a, ped_b) and not self._sees(ped_b, ped_a):
+    def _maybe_emit_greeting(self, ped_a: Pedestrian, ped_b: Pedestrian, now_sec: float) -> None:
+        emitter: Pedestrian | None = None
+        if self._sees(ped_a, ped_b):
+            emitter = ped_a
+        elif self._sees(ped_b, ped_a):
+            emitter = ped_b
+
+        if emitter is None:
             return
 
         pair = tuple(sorted((ped_a.id, ped_b.id)))
@@ -65,7 +64,7 @@ class AuditoryEventDetector:
             return
 
         self._last_greeting_by_pair[pair] = now_sec
-        self._emit("greeting")
+        self._emit("greeting", emitter)
 
     def _sees(self, observer: Pedestrian, target: Pedestrian) -> bool:
         dx = target.pose.position.x - observer.pose.position.x
@@ -80,7 +79,6 @@ class AuditoryEventDetector:
             math.sin(target_angle - observer_yaw),
             math.cos(target_angle - observer_yaw),
         )
-
         return abs(angle_error) <= self._greeting_fov_rad / 2.0
 
     @staticmethod
