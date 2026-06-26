@@ -1,101 +1,95 @@
-[![Discord](https://img.shields.io/badge/Discord-Join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/GNTTf9DKyp)
+# Auditory Module
 
-# Arena-Rosnav
+The auditory module adds sound events to the Arena human simulation path. It is
+enabled with `human:=arena enable_auditory:=true`; with
+`enable_auditory:=false`, the same Arena human simulator runs without the
+auditory nodes.
 
-A modular ROS 2 (Jazzy) platform for researching and benchmarking autonomous robot navigation in 2D and 3D simulated environments. It supports classical planners (Nav2), deep-RL planners ([rosnav_rl](https://github.com/Arena-Rosnav/rosnav-rl)), and a variety of simulators (Gazebo, Isaac Sim).
+## Features
 
----
+- Human sound events: moving pedestrians emit `footstep`; nearby facing
+  pedestrians emit `greeting`.
+- Sound-to-material matching: footstep events include floor/material semantic
+  tags so playback can choose a matching sample, for example default vs
+  walnut-plank footsteps.
+- Sound propagation: `sound_propagation_node` converts `SoundEvent` messages
+  into `HeardSoundEvent` messages using listener positions, distance loss,
+  wall/material attenuation, and optional scene loading.
+- Robot hearing: `robot_hearing_node` listens for `HeardSoundEvent`, discovers
+  robots from `state/robots`, republishes per-robot heard events, and publishes
+  an RViz text marker when a robot hears a `greeting`.
+- Audio playback: `human_sound_playback` plays configured sound assets from
+  `config/auditory/acoustic_assets.yaml`.
+- Robot motor sound: `robot_sound_node` can publish robot motor `SoundEvent`
+  messages from robot odometry.
+  
+ Expected nodes when enabled include:
 
-## Installation
+- `sound_propagation_node`
+- `robot_sound_node`
+- `robot_hearing_node`
+- `human_sound_playback`
 
-Prerequisites: [Docker](https://docs.docker.com/engine/install/) installation with [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for GPU support. Current user must be in group `docker`.
-Afterwards, run the following commands to install Arena:
+## Main Topics
 
-### Basic Installation
+- `human_sound_events`: emitted `SoundEvent` stream.
+- `heard_sound_events`: propagated `HeardSoundEvent` stream.
+- `state/robots`: robot fleet metadata used by propagation, robot sound, and
+  robot hearing nodes.
+- `<robot_name>/heard_sound`: per-robot heard event output.
+- `<robot_name>/heard_sound_marker`: RViz text marker for heard greetings.
 
-```sh
-curl https://raw.githubusercontent.com/voshch/Arena/jazzy/install.sh > install.sh
-bash install.sh
-```
-and follow the prompts. This will create a ROS 2 workspace at your target location and instruct you how to proceed (yellow text).
+## Tests
 
+Run the auditory ROS tests:
 
-### Optional Features
-```sh
-cd ~/arena_ws # replace with your actual workspace path
-source arena
-arena feature isaac install # optional
-arena feature gazebo install # optional
-arena feature training install # optional
-arena feature vllm install # optional: local LLM backend
-```
+```python3 -m pytest task_generator/tests/ros/test_sound_event.py -q```
 
-We recommend installing at least one simulator.
+Run only the full auditory round-trip test:
 
-#### vllm
-
-Runs a local vLLM server plus a LiteLLM proxy that speaks the Gemini API, so GPT consumers in `task_generator` transparently hit local inference instead of Google. Defaults target an 11 GB 2080 Ti (Qwen3-0.6B, 40% GPU util).
-
-Tune via [`_meta/docker/features/vllm/config.yaml`](_meta/docker/features/vllm/config.yaml):
-
-| key | default | purpose |
-| --- | --- | --- |
-| `model` | `Qwen/Qwen3-0.6B` | HF model id |
-| `gpu_memory_utilization` | `0.4` | fraction of VRAM vllm may claim |
-| `max_model_len` | `4096` | context window |
-| `port` / `proxy_port` | `8000` / `4000` | vllm / LiteLLM ports |
-
-After editing, re-run `arena feature vllm update` to recreate the container.
-The container will start automatically on source and continue running in the background. To free up GPU memory, stop it with `arena feature docker stop`.
-
-## Usage
-
-```sh
-cd ~/arena_ws # replace with your actual workspace path
-source arena
-arena launch sim:=isaac                          # Isaac Sim
-arena launch mobile:=rosnav_rl mobile.agent:=<your_agent>  # DRL planner
-arena train sim:=gazebo mobile:=rosnav_rl train_config:=<config.yaml>  # DRL training
+```python3 -m pytest \
+  task_generator/tests/ros/test_sound_event.py::test_auditory_round_trip_greeting_reaches_robot_marker \
+  -q
 ```
 
-### DRL quick-start
-Place your trained agent folder inside `Arena/arena_training/agents/<agent_name>/` (must contain `training_config.yaml` and `best_model.zip`), then launch with `mobile:=rosnav_rl mobile.agent:=<agent_name>`. Refer to the [arena_training](arena_training/README.md) for training instructions.
+The round-trip test checks:
 
+1. A synthetic `SoundEvent` with `sound_type="greeting"` is published.
+2. `sound_propagation_node` creates a `HeardSoundEvent` for `robot:robot1`.
+3. `robot_hearing_node` republishes it on `robot1/heard_sound`.
+4. `robot_hearing_node` publishes an RViz text marker on
+   `robot1/heard_sound_marker`.
+5. The marker text indicates the robot heard a greeting.
 
-## Development
+## Benchmark
 
-### Linting
+Use the benchmark when you want a same-condition CPU and latency comparison.
+The baseline and auditory commands should differ only by `enable_auditory`.
 
-Linting is handled by [Ruff](https://docs.astral.sh/ruff/), driven by [pre-commit](https://pre-commit.com/). Config lives in root [`pyproject.toml`](pyproject.toml); the hook pin is in [`.pre-commit-config.yaml`](.pre-commit-config.yaml). Auto-formatting is intentionally not enforced.
-
-**One-time setup:**
-```bash
-pip install pre-commit
-pre-commit install
+```ros2 run task_generator auditory_benchmark \
+  --baseline-cmd "python3 -m arena_bringup.supervisor sim:=gazebo headless:=true human:=arena rviz:=false enable_auditory:=false" \
+  --auditory-cmd "python3 -m arena_bringup.supervisor sim:=gazebo headless:=true human:=arena rviz:=false enable_auditory:=true" \
+  --duration-sec 120 \
+  --startup-delay-sec 20 \
+  --output-json /tmp/auditory_benchmark.json \
+  --output-csv /tmp/auditory_benchmark.csv
 ```
 
-**Everyday use:** hooks run automatically on `git commit` against staged files. To run manually:
-```bash
-pre-commit run            # staged files only
-pre-commit run -a         # entire repo
-ruff check .              # check without pre-commit
-```
 
-If the hook auto-fixes something, the commit is aborted and the fixes are left unstaged — `git add` and re-commit.
+The benchmark reports:
 
-### CI
+- average and max process-tree CPU usage
+- observed `SoundEvent` count
+- observed `HeardSoundEvent` count
+- latency from matching `SoundEvent` to `HeardSoundEvent`
 
-[`.github/workflows/lint.yml`](.github/workflows/lint.yml) runs the same pre-commit hooks on every push to `jazzy` and every pull request targeting it. The GH check uses the exact config and hook pins from `.pre-commit-config.yaml`, so local and CI never drift. Make the check required in branch protection to block merges on lint failures.
+This latency is propagation/message-flow latency. It does not measure physical
+speaker-device latency.
 
-Bump the Ruff version with `pre-commit autoupdate`.
+## Configuration
 
-## Troubleshooting
-
-### Unknown runtime specified 'nvidia'
-
-```sh
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-sudo nvidia-ctk runtime configure --runtime=containerd
-sudo systemctl restart containerd
-```
+- Sound assets: `task_generator/config/auditory/acoustic_assets.yaml`
+- Acoustic materials: `task_generator/config/auditory/acoustic_materials.yaml`
+- Launch wiring: `task_generator/launch/human/human.launch.py`
+- Main nodes: `task_generator/task_generator/auditory/`
+- Human event generation: `task_generator/task_generator/simulators/human/`
