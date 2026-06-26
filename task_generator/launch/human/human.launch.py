@@ -18,6 +18,16 @@ def generate_launch_description():
         name='namespace',
     )
 
+    enable_auditory = LaunchArgument(
+        name="enable_auditory",
+        default_value="false",
+    )
+
+    robot = LaunchArgument(
+        name='robot',
+        default_value='jackal',
+    )
+
     launch_human_simulator = SelectAction(launch.substitutions.LaunchConfiguration('simulator'))
 
     launch_human_simulator.add(
@@ -83,6 +93,7 @@ def generate_launch_description():
                 name='sound_propagation_node',
                 namespace=namespace.substitution,
                 output='screen',
+                condition=launch.conditions.IfCondition(enable_auditory.substitution),
                 parameters=[{
                     "use_sim_time": True,
                     "sound_events_topic": "human_sound_events",
@@ -98,7 +109,8 @@ def generate_launch_description():
                     "max_first_order_reflections": 8,
                     "reflection_floor_db": -60.0,
                     "ceiling_height_m": 3.0,
-                    "publish_inaudible": False,
+                    "publish_inaudible": True,
+                    "odom_topic_template": "{namespace}/{name}_velocity_controller/odom",
                 }],
             ),
 
@@ -109,6 +121,7 @@ def generate_launch_description():
                 name='robot_sound_node',
                 namespace=namespace.substitution,
                 output='screen',
+                condition=launch.conditions.IfCondition(enable_auditory.substitution),
                 parameters=[{
                     "use_sim_time": True,
                     "robot_fleet_topic": "state/robots",
@@ -130,15 +143,30 @@ def generate_launch_description():
                 name='robot_hearing_node',
                 namespace=namespace.substitution,
                 output='screen',
+                condition=launch.conditions.IfCondition(enable_auditory.substitution),
+                # parameters=[{
+                #     "use_sim_time": True,
+                #     "robot_name": launch.substitutions.LaunchConfiguration("robot_name"),
+                #     "output_topic": [launch.substitutions.LaunchConfiguration("robot_name"), "/heard_sound"],
+                #     "marker_topic": [launch.substitutions.LaunchConfiguration("robot_name"),"/heard_sound_marker" ],
+                #     "heard_sound_events_topic": "heard_sound_events",
+                #     # "output_topic": "robot1/heard_sound",
+                #     "ignore_self": True,
+                #     "min_snr_db": 3.0,
+                #     "honor_propagation_delay": True,
+                #     # "marker_topic": "robot1/heard_sound_marker",
+                #     "marker_lifetime_sec": 1.5,
+                #     "marker_z_offset": 1.2,
+                # }],
                 parameters=[{
                     "use_sim_time": True,
-                    "robot_name": "robot1",
+                    "robot_fleet_topic": "state/robots",
                     "heard_sound_events_topic": "heard_sound_events",
-                    "output_topic": "robot1/heard_sound",
+                    "heard_sound_topic_suffix": "heard_sound",
+                    "marker_topic_suffix": "heard_sound_marker",
                     "ignore_self": True,
-                    "min_snr_db": 3.0,
+                    "min_snr_db": -5.0,
                     "honor_propagation_delay": True,
-                    "marker_topic": "robot1/heard_sound_marker",
                     "marker_lifetime_sec": 1.5,
                     "marker_z_offset": 1.2,
                 }],
@@ -151,6 +179,7 @@ def generate_launch_description():
                 name='human_sound_playback',
                 namespace=namespace.substitution,
                 output='screen',
+                condition=launch.conditions.IfCondition(enable_auditory.substitution),
                 parameters=[{
                     "sound_events_topic": "human_sound_events",
                     "episode_topic": "state/episode",

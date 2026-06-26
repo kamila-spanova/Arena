@@ -1,17 +1,4 @@
 assets:
-  footstep:
-    category: footstep
-    semantic_tags: [human, movement, transient]
-    reference_level_db: 45.0
-    reference_distance_m: 1.0
-    normalization_dbfs: -6.0
-    loop: false
-
-    variants:
-      - sample_id: footstep_concrete_01
-        file: footstep.wav
-        tags: [walk, concrete]
-        octave_band_levels_db: auto
   # footstep:
   #   category: footstep
   #   semantic_tags: [human, movement, transient]
@@ -21,15 +8,28 @@ assets:
   #   loop: false
 
   #   variants:
-  #     - sample_id: footstep_default_01
+  #     - sample_id: footstep_concrete_01
   #       file: footstep.wav
-  #       tags: [walk, default, concrete]
+  #       tags: [walk, concrete]
   #       octave_band_levels_db: auto
+  footstep:
+    category: footstep
+    semantic_tags: [human, movement, transient]
+    reference_level_db: 45.0
+    reference_distance_m: 1.0
+    normalization_dbfs: -6.0
+    loop: false
 
-  #     - sample_id: footstep_wood_01
-  #       file: footstep_2.wav
-  #       tags: [walk, wood]
-  #       octave_band_levels_db: auto
+    variants:
+      - sample_id: footstep_default_01
+        file: footstep.wav
+        tags: [walk, default]
+        octave_band_levels_db: auto
+
+      - sample_id: footstep_walnut_planks_01
+        file: footstep_2.wav
+        tags: [walk, walnut_planks]
+        octave_band_levels_db: auto
 
   greeting:
     category: speech

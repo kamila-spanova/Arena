@@ -34,6 +34,8 @@ from geometry_msgs.msg import Point
 from std_msgs.msg import ColorRGBA, String
 from task_generator_msgs.msg import SoundEvent
 from task_generator.auditory.qos_profiles import transient_event_qos
+from arena_simulation_setup.tree.World import WorldIdentifier
+from task_generator.auditory.acoustic_scene import AcousticScene
 
 class BaseHumanSimulator(NodeInterface, abc.ABC):
     _arena_peds_publisher: rclpy.publisher.Publisher
@@ -72,6 +74,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         self._wall_counter = itertools.count()
         self._known_regions: dict[str, Region] = {}
         self._sound_event_counter = itertools.count()
+        self._acoustic_scene: AcousticScene | None = None
 
         self._arena_peds_publisher = self.node.create_publisher(Pedestrians, self._namespace("arena_peds"), 10)
         self._marker_publisher = self.node.create_publisher(
@@ -118,6 +121,19 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
             greeting_fov_deg=90.0,
             greeting_cooldown_sec=5.0,
         )
+        world_qos = rclpy.qos.QoSProfile(
+            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
+            durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL,
+            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+
+        self.node.create_subscription(
+            String,
+            self._namespace("state", "world"),
+            self._cb_world_for_footsteps,
+            world_qos,
+        )
 
     # def publish_arena_peds(self, msg: Pedestrians):
     #     """Publish pedestrian states."""
@@ -130,6 +146,33 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         now = self.node.sim_time
         now_sec = float(now.sec) + float(now.nanosec) * 1e-9
         self._auditory_events.update(msg, now_sec)
+
+    def _cb_world_for_footsteps(self, msg: String) -> None:
+        world_name = msg.data.strip()
+        if not world_name:
+            return
+
+        try:
+            world = WorldIdentifier(world_name).resolve_sync().load()
+            self._acoustic_scene = AcousticScene.from_world(world)
+        except Exception as exc:
+            self._logger.warning(
+                f"failed to load acoustic scene for footstep material mapping: {exc!r}"
+            )
+            self._acoustic_scene = None
+
+    def _footstep_floor_tag(self, ped: Pedestrian) -> str:
+        if self._acoustic_scene is None:
+            return "default"
+
+        zone = self._acoustic_scene.zone_at(ped.pose.position)
+        if zone is None:
+            return "default"
+
+        if zone.floor_material_id == "Walnut_Planks":
+            return "walnut_planks"
+
+        return "default"
 
     def publish_sound_event(self, sound_type: str, ped: Pedestrian) -> None:
         sound_type = sound_type.strip()
@@ -150,7 +193,11 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         msg.asset_id = sound_type
         msg.source_position = ped.pose.position
         msg.source_yaw = float(yaw)
-        msg.semantic_tags = ['default'] #FIXME: add semantic tags
+        # msg.semantic_tags = ['default'] #FIXME: add semantic tags
+        if sound_type == "footstep":
+            msg.semantic_tags = ["footstep", self._footstep_floor_tag(ped)]
+        else:
+            msg.semantic_tags = ["default"]
         # msg.reference_distance_m = 1.0
         # msg.directivity_factor = 0.0
         msg.loop = False

@@ -73,6 +73,47 @@ def _sample_grid_positions(
 
     return accepted
 
+def _sample_from_candidates(
+    available: np.ndarray,
+    n: int,
+    safe_dist_cells: float,
+    rng: np.random.Generator,
+    *,
+    max_depth: int = 10,
+) -> np.ndarray:
+    """Pick n cells from `available` (row, col) keeping safe_dist_cells separation between picks.
+
+    Returns an (n, 2) int array. Raises RuntimeError if fewer than n cells fit.
+    """
+    if n <= 0:
+        return np.zeros((0, 2), dtype=np.int64)
+
+    if len(available) < n:
+        raise RuntimeError(f"need {n} positions, only {len(available)} candidate cells available")
+
+    accepted = np.zeros((n, 2), dtype=np.int64)
+    accepted_n = 0
+
+    for _ in range(max_depth):
+        need = n - accepted_n
+        if need <= 0:
+            break
+        if need > len(available):
+            raise RuntimeError(f"need {need} more positions, only {len(available)} candidate cells available")
+        for idx in rng.choice(len(available), need, replace=False):
+            candidate = available[idx]
+            if accepted_n and np.any(np.linalg.norm(accepted[:accepted_n] - candidate, axis=1) < safe_dist_cells):
+                continue
+            accepted[accepted_n] = candidate
+            accepted_n += 1
+            if accepted_n >= n:
+                break
+
+    if accepted_n < n:
+        raise RuntimeError(f"failed to find {n} positions with safe_dist={safe_dist_cells} cells after {max_depth} retries")
+
+    return accepted
+
 
 class WorldManager(NodeInterface):
     """
@@ -156,6 +197,7 @@ class WorldManager(NodeInterface):
         safe_dist: float,
         forbidden_zones: list[PositionRadius] | None = None,
         forbid: bool = True,
+        polygon: shapely.Polygon | None = None,
     ) -> list[Position]:
         """Sample n map positions with Euclidean safe_dist (metres) clearance from obstacles and from each other.
 
@@ -170,7 +212,16 @@ class WorldManager(NodeInterface):
 
         safe_dist_cells = safe_dist / self.resolution
         rng = self.node.conf.General.RNG.value
-        cells = _sample_grid_positions(fork.grid, n, safe_dist_cells, rng)
+        # cells = _sample_grid_positions(fork.grid, n, safe_dist_cells, rng)
+        available = _occupancy_to_available(fork.grid, safe_dist_cells)
+
+        if polygon is not None and len(available):
+            world_xy = np.array(
+                [(p.x, p.y) for p in (self._map.tf_grid2pos((int(r), int(c))) for r, c in available)],
+            )
+            available = available[shapely.contains_xy(polygon, world_xy[:, 0], world_xy[:, 1])]
+
+        cells = _sample_from_candidates(available, n, safe_dist_cells, rng)
 
         if forbid:
             halo = int(math.ceil(safe_dist_cells))

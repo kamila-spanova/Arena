@@ -15,7 +15,7 @@ from task_generator.auditory.acoustic_scene import AcousticScene
 from task_generator.auditory.material_catalog import AcousticMaterialCatalog
 from task_generator.auditory.propagation import Level3Propagation
 from task_generator_msgs.msg import AcousticPath, HeardSoundEvent, RobotFleet, SoundEvent
-from task_generator.auditory.qos_profiles import transient_event_qos
+from task_generator.auditory.qos_profiles import acoustic_metadata_qos, transient_event_qos
 
 
 
@@ -28,14 +28,15 @@ class SoundPropagationNode(Node):
         self.declare_parameter("arena_peds_topic", "arena_peds")
         self.declare_parameter("map_topic", "map")
         self.declare_parameter("robot_fleet_topic", "state/robots")
-        self.declare_parameter("default_hearing_threshold_db", 20.0)
+        self.declare_parameter("default_hearing_threshold_db", 10.0)
         self.declare_parameter("minimum_propagation_distance_m", 1.0)
         self.declare_parameter("self_hearing_distance_m", 0.3)
         self.declare_parameter("occlusion_penalty_db", 20.0)
         self.declare_parameter("occupied_threshold", 50)
-        self.declare_parameter("publish_inaudible", False)
+        self.declare_parameter("publish_inaudible", True)
         self.declare_parameter("robots_hear_self", True)
         self.declare_parameter("world_topic", "state/world")
+        self.declare_parameter("odom_topic_template", "{namespace}/{name}_velocity_controller/odom")
         self._scene: AcousticScene | None = None
         self._world_name = ""
         self._pending_world_name = ""
@@ -56,7 +57,7 @@ class SoundPropagationNode(Node):
         self.create_subscription(SoundEvent, sound_events_topic, self._cb_sound_event, transient_event_qos())
         self.create_subscription(Pedestrians, peds_topic, self._cb_peds, 10)
         self.create_subscription(OccupancyGrid, map_topic, self._cb_map, 1)
-        self.create_subscription(RobotFleet, robot_fleet_topic, self._cb_robot_fleet, 1)
+        self.create_subscription(RobotFleet, robot_fleet_topic, self._cb_robot_fleet, acoustic_metadata_qos())
         share = Path(get_package_share_directory("task_generator"))
         materials = AcousticMaterialCatalog(share / "config" / "auditory" / "acoustic_materials.yaml")
         self._propagation = Level3Propagation(materials)
@@ -122,12 +123,14 @@ class SoundPropagationNode(Node):
 
     def _cb_robot_fleet(self, msg: RobotFleet) -> None:
         for robot in msg.robots:
-            topic = f"{robot.ns}/odom"
+            # topic = f"{robot.ns}/odom"
+            topic = str(self.get_parameter("odom_topic_template").value).format(namespace=str(robot.ns).rstrip("/"),name=str(robot.name))
             sub = self.create_subscription(Odometry, topic, lambda odom, name=robot.name: self._cb_robot_odom(name, odom), 10)
             self._odom_subs.append(sub)
 
     def _cb_robot_odom(self, robot_name: str, msg: Odometry) -> None:
         self._robots[f"robot:{robot_name}"] = msg.pose.pose.position
+        self.get_logger().info(f"robot listener updated: robot:{robot_name}")
 
 
     def _cb_sound_event(self, event: SoundEvent) -> None:
@@ -187,7 +190,6 @@ class SoundPropagationNode(Node):
         msg.asset_id = event.asset_id
         msg.source_position = event.source_position
         msg.listener_position = listener_pos
-        # msg.distance = float(distance)
         msg.distance = float(geometric_distance)
         msg.source_volume_db = event.source_volume_db
         msg.received_volume_db = float(received)
@@ -195,7 +197,6 @@ class SoundPropagationNode(Node):
         msg.audible = received >= threshold
         msg.occluded = occluded
         msg.bearing_rad = float(math.atan2(dy, dx))
-        # msg.direct_delay_sec = float(distance / 343.0)
         msg.direct_delay_sec = float(effective_distance / 343.0)
         msg.propagation_level = 0
         msg.reverb_rt60_sec = 0.0

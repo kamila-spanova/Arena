@@ -12,6 +12,8 @@ def _ros_gate():
     pytest.importorskip("arena_people_msgs.msg")
     pytest.importorskip("geometry_msgs.msg")
     pytest.importorskip("task_generator_msgs.msg")
+    pytest.importorskip("nav_msgs.msg")
+    pytest.importorskip("visualization_msgs.msg")
 
 
 def _spin_until(rclpy, nodes, predicate, timeout_sec: float = 2.0) -> None:
@@ -86,6 +88,18 @@ def _make_heard_sound_event():
     event.occluded = False
     return event
 
+def _make_robot_fleet(robot_name: str, namespace: str):
+    from task_generator_msgs.msg import RobotDescriptor, RobotFleet
+
+    robot = RobotDescriptor()
+    robot.name = robot_name
+    robot.model = "jackal"
+    robot.ns = namespace
+    robot.frame = robot_name
+
+    fleet = RobotFleet()
+    fleet.robots.append(robot)
+    return fleet
 
 def test_sound_event_round_trips_to_heard_sound_event(rclpy_context):
     import rclpy
@@ -95,7 +109,7 @@ def test_sound_event_round_trips_to_heard_sound_event(rclpy_context):
     from task_generator.auditory.sound_propagation_node import SoundPropagationNode
     from task_generator_msgs.msg import HeardSoundEvent, SoundEvent
 
-    suffix = uuid.uuid4().hex[:8]
+    suffix = f"t_{uuid.uuid4().hex[:8]}"
     sound_topic = f"/test/{suffix}/human_sound_events"
     heard_topic = f"/test/{suffix}/heard_sound_events"
     peds_topic = f"/test/{suffix}/arena_peds"
@@ -169,71 +183,136 @@ def test_sound_event_round_trips_to_heard_sound_event(rclpy_context):
         propagation.destroy_node()
 
 
-def test_robot_hearing_node_republishes_target_robot_event(rclpy_context):
+def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
     import rclpy
     from rclpy.parameter import Parameter
-    from task_generator.auditory.qos_profiles import transient_event_qos
+    from nav_msgs.msg import Odometry
+    from task_generator.auditory.qos_profiles import acoustic_metadata_qos, transient_event_qos
     from task_generator.auditory.robot_hearing_node import RobotHearingNode
-    from task_generator_msgs.msg import HeardSoundEvent
+    from task_generator.auditory.sound_propagation_node import SoundPropagationNode
+    from task_generator_msgs.msg import HeardSoundEvent, RobotFleet, SoundEvent
     from visualization_msgs.msg import Marker
 
-    suffix = uuid.uuid4().hex[:8]
-    heard_topic = f"/test/{suffix}/heard_sound_events"
-    output_topic = f"/test/{suffix}/robot1/heard_sound"
-    marker_topic = f"/test/{suffix}/robot1/heard_sound_marker"
+    suffix = f"t_{uuid.uuid4().hex[:8]}"
+    ns = f"/test/{suffix}"
 
-    hearing = RobotHearingNode(
+    sound_topic = f"{ns}/human_sound_events"
+    heard_topic = f"{ns}/heard_sound_events"
+    peds_topic = f"{ns}/arena_peds"
+    map_topic = f"{ns}/map"
+    robot_fleet_topic = f"{ns}/state/robots"
+    world_topic = f"{ns}/state/world"
+    robot_ns = f"{ns}/robot1"
+    robot_odom_topic = f"{robot_ns}/odom"
+    robot_heard_topic = f"{ns}/robot1/heard_sound"
+    robot_marker_topic = f"{ns}/robot1/heard_sound_marker"
+
+    propagation = SoundPropagationNode(
         parameter_overrides=[
-            Parameter("robot_name", Parameter.Type.STRING, "robot1"),
+            Parameter("sound_events_topic", Parameter.Type.STRING, sound_topic),
             Parameter("heard_sound_events_topic", Parameter.Type.STRING, heard_topic),
-            Parameter("output_topic", Parameter.Type.STRING, output_topic),
-            Parameter("marker_topic", Parameter.Type.STRING, marker_topic),
-            Parameter("honor_propagation_delay", Parameter.Type.BOOL, False),
-            Parameter("min_snr_db", Parameter.Type.DOUBLE, 3.0),
+            Parameter("arena_peds_topic", Parameter.Type.STRING, peds_topic),
+            Parameter("map_topic", Parameter.Type.STRING, map_topic),
+            Parameter("robot_fleet_topic", Parameter.Type.STRING, robot_fleet_topic),
+            Parameter("world_topic", Parameter.Type.STRING, world_topic),
+            Parameter("odom_topic_template", Parameter.Type.STRING, "{namespace}/odom"),
+            Parameter("default_hearing_threshold_db", Parameter.Type.DOUBLE, 10.0),
+            Parameter("publish_inaudible", Parameter.Type.BOOL, True),
         ],
     )
 
-    emitter = rclpy.create_node(f"heard_event_emitter_{suffix}")
-    consumer = rclpy.create_node(f"robot_heard_consumer_{suffix}")
+    hearing = RobotHearingNode(
+        namespace=ns,
+        parameter_overrides=[
+            Parameter("heard_sound_events_topic", Parameter.Type.STRING, heard_topic),
+            Parameter("robot_fleet_topic", Parameter.Type.STRING, robot_fleet_topic),
+            Parameter("heard_sound_topic_suffix", Parameter.Type.STRING, "heard_sound"),
+            Parameter("marker_topic_suffix", Parameter.Type.STRING, "heard_sound_marker"),
+            Parameter("honor_propagation_delay", Parameter.Type.BOOL, False),
+            Parameter("min_snr_db", Parameter.Type.DOUBLE, -15.0),
+        ],
+    )
 
-    received: list[HeardSoundEvent] = []
+    emitter = rclpy.create_node(f"auditory_roundtrip_emitter_{suffix}")
+    consumer = rclpy.create_node(f"auditory_roundtrip_consumer_{suffix}")
+
+    heard_by_robot: list[HeardSoundEvent] = []
     markers: list[Marker] = []
 
-    publisher = emitter.create_publisher(
-        HeardSoundEvent,
-        heard_topic,
-        transient_event_qos(),
-    )
+    fleet_pub = emitter.create_publisher(RobotFleet, robot_fleet_topic, acoustic_metadata_qos())
+    odom_pub = emitter.create_publisher(Odometry, robot_odom_topic, 10)
+    sound_pub = emitter.create_publisher(SoundEvent, sound_topic, transient_event_qos())
+
     consumer.create_subscription(
         HeardSoundEvent,
-        output_topic,
-        received.append,
+        robot_heard_topic,
+        heard_by_robot.append,
         transient_event_qos(),
     )
-    consumer.create_subscription(Marker, marker_topic, markers.append, 10)
+    consumer.create_subscription(Marker, robot_marker_topic, markers.append, 10)
+
+    odom = Odometry()
+    odom.header.frame_id = "map"
+    odom.pose.pose.position.x = 1.0
+    odom.pose.pose.position.y = 0.0
+    odom.pose.pose.orientation.w = 1.0
 
     try:
         _spin_until(
             rclpy,
-            [emitter, hearing, consumer],
-            lambda: hearing.count_subscribers(heard_topic) > 0
-            and emitter.count_subscribers(heard_topic) > 0,
+            [emitter, propagation, hearing, consumer],
+            lambda: fleet_pub.get_subscription_count() >= 2
+            and sound_pub.get_subscription_count() >= 1,
+            timeout_sec=5.0,
         )
 
-        publisher.publish(_make_heard_sound_event())
+        fleet_pub.publish(_make_robot_fleet("robot1", robot_ns))
 
         _spin_until(
             rclpy,
-            [emitter, hearing, consumer],
-            lambda: len(received) == 1 and len(markers) == 1,
+            [emitter, propagation, hearing, consumer],
+            lambda: "robot1" in hearing._robot_names
+            and odom_pub.get_subscription_count() >= 1,
+            timeout_sec=5.0,
         )
 
-        heard = received[0]
-        assert heard.event_id == "heard_roundtrip_001"
+        odom_pub.publish(odom)
+
+        _spin_until(
+            rclpy,
+            [emitter, propagation, hearing, consumer],
+            lambda: "robot:robot1" in propagation._robots,
+            timeout_sec=5.0,
+        )
+
+        event = _make_sound_event()
+        event.event_id = "full_auditory_roundtrip_001"
+        event.sound_type = "greeting"
+        event.label = "greeting"
+        event.asset_id = "greeting"
+        sound_pub.publish(event)
+
+        _spin_until(
+            rclpy,
+            [emitter, propagation, hearing, consumer],
+            lambda: len(heard_by_robot) == 1 and len(markers) == 1,
+            timeout_sec=5.0,
+        )
+
+        heard = heard_by_robot[0]
+        assert heard.event_id == "full_auditory_roundtrip_001"
         assert heard.listener_id == "robot:robot1"
         assert heard.sound_type == "greeting"
-        assert markers[0].text == "Heard: voice"
+        assert heard.audible is True
+
+        marker = markers[0]
+        assert marker.ns == "robot1_heard_sound"
+        assert "GREETING" in marker.text
+        assert marker.type == Marker.TEXT_VIEW_FACING
+        assert marker.action == Marker.ADD
+        assert "GREETING" in marker.text
     finally:
         emitter.destroy_node()
         consumer.destroy_node()
         hearing.destroy_node()
+        propagation.destroy_node()
