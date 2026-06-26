@@ -43,11 +43,13 @@ auditory nodes.
 
 Run the auditory ROS tests:
 
-```python3 -m pytest task_generator/tests/ros/test_sound_event.py -q```
+```bash
+python3 -m pytest task_generator/tests/ros/test_sound_event.py -q```
 
 Run only the full auditory round-trip test:
 
-```python3 -m pytest \
+```bash
+python3 -m pytest \
   task_generator/tests/ros/test_sound_event.py::test_auditory_round_trip_greeting_reaches_robot_marker \
   -q
 ```
@@ -66,7 +68,8 @@ The round-trip test checks:
 Use the benchmark when you want a same-condition CPU and latency comparison.
 The baseline and auditory commands should differ only by `enable_auditory`.
 
-```ros2 run task_generator auditory_benchmark \
+```bash
+ros2 run task_generator auditory_benchmark \
   --baseline-cmd "python3 -m arena_bringup.supervisor sim:=gazebo headless:=true human:=arena rviz:=false enable_auditory:=false" \
   --auditory-cmd "python3 -m arena_bringup.supervisor sim:=gazebo headless:=true human:=arena rviz:=false enable_auditory:=true" \
   --duration-sec 120 \
