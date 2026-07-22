@@ -1,17 +1,4 @@
 assets:
-  # footstep:
-  #   category: footstep
-  #   semantic_tags: [human, movement, transient]
-  #   reference_level_db: 45.0
-  #   reference_distance_m: 1.0
-  #   normalization_dbfs: -6.0
-  #   loop: false
-
-  #   variants:
-  #     - sample_id: footstep_concrete_01
-  #       file: footstep.wav
-  #       tags: [walk, concrete]
-  #       octave_band_levels_db: auto
   footstep:
     category: footstep
     semantic_tags: [human, movement, transient]
@@ -22,13 +9,33 @@ assets:
 
     variants:
       - sample_id: footstep_default_01
-        file: footstep.wav
+        file: footstep_default.wav
         tags: [walk, default]
         octave_band_levels_db: auto
 
       - sample_id: footstep_walnut_planks_01
-        file: footstep_2.wav
+        file: footstep_walnut_planks.wav
         tags: [walk, walnut_planks]
+        octave_band_levels_db: auto
+
+      - sample_id: footstep_oak_planks_01
+        file: footstep_oak_planks.wav
+        tags: [walk, oak_planks]
+        octave_band_levels_db: auto
+
+      - sample_id: footstep_marble_tile_01
+        file: footstep_marble_tile.wav
+        tags: [walk, marble_tile]
+        octave_band_levels_db: auto
+
+      - sample_id: footstep_smooth_concrete_01
+        file: footstep_smooth_concrete.wav
+        tags: [walk, smooth_concrete]
+        octave_band_levels_db: auto
+
+      - sample_id: footstep_ceramic_tile_01
+        file: footstep_ceramic_tile.wav
+        tags: [walk, ceramic_tile]
         octave_band_levels_db: auto
 
   greeting:
@@ -56,6 +63,48 @@ assets:
 
     variants:
       - sample_id: motor_sound_01
-        file: motor_sound.wav
+        file: short_motor_sound.wav
         tags: [robot, motor]
+        octave_band_levels_db: auto
+
+  motor_start:
+    playback_gain_db: -3.0
+    category: mechanical
+    semantic_tags: [robot, movement, motor, start]
+    reference_level_db: 55.0
+    reference_distance_m: 1.0
+    # normalization_dbfs: -9.0
+    loop: false
+    variants:
+      - sample_id: motor_start_01
+        file: long_motor_sound_start.wav
+        tags: [robot, motor, start]
+        octave_band_levels_db: auto
+
+  motor_loop:
+    playback_gain_db: -3.0
+    category: mechanical
+    semantic_tags: [robot, movement, motor, steady]
+    reference_level_db: 55.0
+    reference_distance_m: 1.0
+    # normalization_dbfs: -9.0
+    loop: true
+    variants:
+      - sample_id: motor_loop_01
+        file: long_motor_sound_middle.wav
+        tags: [robot, motor, steady]
+        octave_band_levels_db: auto
+
+  motor_stop:
+    playback_gain_db: -3.0
+    category: mechanical
+    semantic_tags: [robot, movement, motor, stop]
+    reference_level_db: 55.0
+    reference_distance_m: 1.0
+    # normalization_dbfs: -9.0
+    loop: false
+    variants:
+      - sample_id: motor_stop_01
+        file: long_motor_sound_end.wav
+        tags: [robot, motor, stop]
         octave_band_levels_db: auto

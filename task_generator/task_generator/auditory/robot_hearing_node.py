@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import rclpy
+from arena_robots.Robot import RobotIdentifier
 from rclpy.node import Node
 from rclpy.time import Time
 
@@ -35,6 +36,11 @@ class RobotHearingNode(Node):
         # self.declare_parameter("marker_topic", "heard_sound_marker")
         self.declare_parameter("marker_lifetime_sec", 1.5)
         self.declare_parameter("marker_z_offset", 1.2)
+        self.declare_parameter("marker_text_height_m", 0.35)
+        self.declare_parameter(
+            "marker_sound_types",
+            ["greeting", "footstep", "motor"],
+        )
 
         # self._robot_name = str(self.get_parameter("robot_name").value).strip()
         self._robot_names: set[str] = set()
@@ -76,12 +82,12 @@ class RobotHearingNode(Node):
             if msg.source_agent_name == robot_name:
                 return
 
-        # if not msg.audible:
-        #     return
+        if not msg.audible:
+            return
 
-        # snr_db = float(msg.received_volume_db - msg.hearing_threshold_db)
-        # if snr_db < float(self.get_parameter("min_snr_db").value):
-        #     return
+        snr_db = float(msg.received_volume_db - msg.hearing_threshold_db)
+        if snr_db < float(self.get_parameter("min_snr_db").value):
+            return
 
         if bool(self.get_parameter("honor_propagation_delay").value):
             release_time = Time.from_msg(msg.header.stamp) + rclpy.duration.Duration(
@@ -108,7 +114,10 @@ class RobotHearingNode(Node):
                 continue
 
             self._robot_names.add(robot_name)
-            self._robot_frames[robot_name] = str(robot.frame).strip()
+            self._robot_frames[robot_name] = self._robot_base_frame(
+                str(robot.model),
+                str(robot.frame),
+            )
 
             if robot_name not in self._heard_pubs:
                 self._heard_pubs[robot_name] = self.create_publisher(
@@ -124,7 +133,10 @@ class RobotHearingNode(Node):
                     10,
                 )
 
-            self.get_logger().info(f"registered robot hearing outputs for {robot_name!r}")
+            self.get_logger().info(
+                f"registered robot hearing outputs for {robot_name!r} in "
+                f"frame {self._robot_frames[robot_name]!r}"
+            )
 
     def _publish_due_events(self) -> None:
         if not self._pending:
@@ -145,7 +157,13 @@ class RobotHearingNode(Node):
             self._publish_heard_marker(item.robot_name, item.msg)
 
     def _publish_heard_marker(self, robot_name: str, msg: HeardSoundEvent) -> None:
-        if msg.sound_type != "greeting":
+        marker_sound_types = {
+            str(value).strip().lower()
+            for value in self.get_parameter("marker_sound_types").value
+            if str(value).strip()
+        }
+        sound_type = str(msg.sound_type).strip().lower() or "sound"
+        if marker_sound_types and sound_type not in marker_sound_types:
             return
 
         pub = self._marker_pubs.get(robot_name)
@@ -166,21 +184,60 @@ class RobotHearingNode(Node):
         marker.type = Marker.TEXT_VIEW_FACING
         marker.action = Marker.ADD
 
-        # Robot-local position: directly above the robot base frame.
         marker.pose.position.x = 0.0
         marker.pose.position.y = 0.0
-        marker.pose.position.z = 3.0
+        marker.pose.position.z = float(
+            self.get_parameter("marker_z_offset").value
+        )
         marker.pose.orientation.w = 1.0
 
-        marker.scale.z = 1.5
-        marker.color = ColorRGBA(r=1.0, g=0.2, b=0.1, a=1.0)
-        marker.text = "HEARD GREETING"
+        marker.scale.z = float(
+            self.get_parameter("marker_text_height_m").value
+        )
+        marker.color = self._marker_color(sound_type)
+        marker.text = (
+            f"HEARD {sound_type.upper()}\n"
+            f"{msg.received_volume_db:.1f} dB"
+        )
 
-        marker.lifetime.sec = 0
-        marker.lifetime.nanosec = 0
+        lifetime = max(
+            float(self.get_parameter("marker_lifetime_sec").value),
+            0.0,
+        )
+        marker.lifetime.sec = int(lifetime)
+        marker.lifetime.nanosec = int(
+            (lifetime % 1.0) * 1_000_000_000
+        )
         marker.frame_locked = True
 
         pub.publish(marker)
+
+    def _robot_base_frame(self, model_name: str, frame_prefix: str) -> str:
+        prefix = frame_prefix.strip("/")
+        try:
+            base_frame = (
+                RobotIdentifier(model_name)
+                .resolve_sync()
+                .model_params.base_frame
+                .strip("/")
+            )
+        except Exception as exc:
+            base_frame = "base_link"
+            self.get_logger().warning(
+                f"could not resolve base frame for robot model {model_name!r}: "
+                f"{exc}; using {base_frame!r}"
+            )
+        return "/".join(part for part in (prefix, base_frame) if part)
+
+    @staticmethod
+    def _marker_color(sound_type: str) -> ColorRGBA:
+        if sound_type == "greeting":
+            return ColorRGBA(r=0.2, g=0.75, b=1.0, a=1.0)
+        if sound_type == "footstep":
+            return ColorRGBA(r=1.0, g=0.8, b=0.2, a=1.0)
+        if sound_type == "motor":
+            return ColorRGBA(r=1.0, g=0.35, b=0.08, a=1.0)
+        return ColorRGBA(r=0.9, g=0.9, b=0.9, a=1.0)
 
 
 def main() -> None:

@@ -44,7 +44,10 @@ class AcousticScene:
         return cls(zones=tuple(zones), walls=tuple(walls))
 
     def zone_at(self, point: Point) -> AcousticZone | None:
-        candidate = shapely.Point(point.x, point.y)
+        return self.zone_at_xy(point.x, point.y)
+
+    def zone_at_xy(self, x: float, y: float) -> AcousticZone | None:
+        candidate = shapely.Point(float(x), float(y))
         return next((zone for zone in self.zones if zone.polygon.covers(candidate)), None)
 
     def intersecting_walls(self, source: Point, listener: Point) -> list[AcousticWall]:

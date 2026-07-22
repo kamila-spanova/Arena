@@ -168,6 +168,7 @@ class ConfigFileGenerator(ArenaMixinNode):
                 or '/pedestrian_markers/' in topic_name
                 or topic_name.endswith('/wall_markers')
                 or topic_name.endswith('/human_sound_markers')
+                or topic_name.endswith('/motor_sound_markers')
             ):
                 pedestrian_topics.append((topic_name, 'visualization_msgs/msg/MarkerArray'))
             elif topic_name.endswith('/people') and 'people_msgs/msg/People' in topic_types:
@@ -178,6 +179,14 @@ class ConfigFileGenerator(ArenaMixinNode):
         expected_sound_topic = os.path.join(self._TASKGEN_NODE, "human_sound_markers")
         if expected_sound_topic not in [topic for topic, _ in pedestrian_topics]:
             pedestrian_topics.append((expected_sound_topic, 'visualization_msgs/msg/MarkerArray'))
+        expected_motor_sound_topic = os.path.join(
+            self._TASKGEN_NODE,
+            "motor_sound_markers",
+        )
+        if expected_motor_sound_topic not in [topic for topic, _ in pedestrian_topics]:
+            pedestrian_topics.append(
+                (expected_motor_sound_topic, 'visualization_msgs/msg/MarkerArray')
+            )
 
         if not pedestrian_topics:
             self.get_logger().info("No pedestrian topics found. Pedestrian group will be empty.")
@@ -193,15 +202,20 @@ class ConfigFileGenerator(ArenaMixinNode):
             elif topic_type == 'visualization_msgs/msg/MarkerArray':
                 leaf = os.path.basename(topic_name)
                 is_static = leaf.startswith('static')
-                is_sound = leaf == 'human_sound_markers'
+                is_human_sound = leaf == 'human_sound_markers'
+                is_motor_sound = leaf == 'motor_sound_markers'
                 is_legacy_unbucketed_static = leaf == 'static'
                 enabled = not (topic_name.endswith('/wall_markers') or leaf == 'extra' or is_legacy_unbucketed_static)
+                display_name = (
+                    'sound_cones' if is_human_sound
+                    else 'motor_sound_arcs' if is_motor_sound
+                    else leaf
+                )
                 display = Utils.Displays.pedestrians(
                     topic_name,
-                    name='sound_cones' if is_sound else leaf,
+                    name=display_name,
                     enabled=enabled,
                     reliability='Reliable' if is_static else 'Best Effort',
-                    # reliability='Best Effort',
                     durability='Transient Local' if is_static else 'Volatile',
                     # durability='Volatile',
                 )

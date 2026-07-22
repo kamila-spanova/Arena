@@ -173,6 +173,9 @@ def test_sound_event_round_trips_to_heard_sound_event(rclpy_context):
         assert heard.distance == pytest.approx(5.0)
         assert heard.occluded is False
         assert heard.audible is True
+        assert heard.propagation_backend == "legacy_distance_occlusion"
+        assert heard.used_backend_fallback is False
+        assert heard.backend_fallback_reason == ""
         assert heard.received_volume_db == pytest.approx(
             60.0 - 20.0 * math.log10(5.0),
             abs=1e-3,
@@ -275,6 +278,13 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
             and odom_pub.get_subscription_count() >= 1,
             timeout_sec=5.0,
         )
+        assert hearing._robot_frames["robot1"] == "robot1/base_link"
+
+        inaudible = _make_heard_sound_event()
+        inaudible.listener_id = "robot:robot1"
+        inaudible.audible = False
+        hearing._cb_heard_sound(inaudible)
+        assert hearing._pending == []
 
         odom_pub.publish(odom)
 
@@ -307,12 +317,123 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
 
         marker = markers[0]
         assert marker.ns == "robot1_heard_sound"
+        assert marker.header.frame_id == "robot1/base_link"
         assert "GREETING" in marker.text
+        assert "dB" in marker.text
         assert marker.type == Marker.TEXT_VIEW_FACING
         assert marker.action == Marker.ADD
-        assert "GREETING" in marker.text
+        assert marker.pose.position.z == pytest.approx(1.2)
+        assert marker.scale.z == pytest.approx(0.35)
+        assert marker.lifetime.sec == 1
+        assert marker.lifetime.nanosec == 500_000_000
     finally:
         emitter.destroy_node()
         consumer.destroy_node()
         hearing.destroy_node()
         propagation.destroy_node()
+
+
+def test_motor_sound_publishes_colored_arcs_and_clears_them(rclpy_context):
+    import rclpy
+    from geometry_msgs.msg import Point
+    from rclpy.parameter import Parameter
+    from task_generator.auditory.qos_profiles import transient_event_qos
+    from task_generator.auditory.robot_sound_node import (
+        RobotSoundNode,
+        RobotSoundSource,
+    )
+    from visualization_msgs.msg import Marker, MarkerArray
+
+    suffix = f"t_{uuid.uuid4().hex[:8]}"
+    marker_topic = f"/test/{suffix}/human_sound_markers"
+    motor = RobotSoundNode(
+        parameter_overrides=[
+            Parameter("motor_marker_topic", Parameter.Type.STRING, marker_topic),
+            Parameter(
+                "sound_events_topic",
+                Parameter.Type.STRING,
+                f"/test/{suffix}/human_sound_events",
+            ),
+            Parameter(
+                "robot_fleet_topic",
+                Parameter.Type.STRING,
+                f"/test/{suffix}/state/robots",
+            ),
+            Parameter("only_when_moving", Parameter.Type.BOOL, True),
+            Parameter("publish_period_sec", Parameter.Type.DOUBLE, 10.0),
+        ]
+    )
+    consumer = rclpy.create_node(f"motor_marker_consumer_{suffix}")
+    received: list[MarkerArray] = []
+    consumer.create_subscription(
+        MarkerArray,
+        marker_topic,
+        received.append,
+        transient_event_qos(depth=10),
+    )
+    motor._robots["robot1"] = RobotSoundSource(
+        name="robot1",
+        namespace="/robot1",
+        position=Point(x=2.0, y=3.0, z=0.0),
+        marker_frame_id="robot1/base_link",
+    )
+    motor._last_speed["robot1"] = 0.2
+
+    try:
+        assert motor._robot_base_frame("jackal", "robot1") == "robot1/base_link"
+        _spin_until(
+            rclpy,
+            [motor, consumer],
+            lambda: motor._marker_pub.get_subscription_count() > 0,
+        )
+        motor._publish_robot_sounds()
+        _spin_until(
+            rclpy,
+            [motor, consumer],
+            lambda: any(
+                marker.action == Marker.ADD
+                for message in received
+                for marker in message.markers
+            ),
+        )
+        added = [
+            marker
+            for message in received
+            for marker in message.markers
+            if marker.action == Marker.ADD
+        ]
+        assert len(added) == 3
+        assert all(marker.type == Marker.LINE_STRIP for marker in added)
+        assert all(marker.header.frame_id == "robot1/base_link" for marker in added)
+        assert all(len(marker.points) > 12 for marker in added)
+        assert max(
+            abs(point.x)
+            for marker in added
+            for point in marker.points
+        ) < 1.1
+        assert len(
+            {(marker.color.r, marker.color.g, marker.color.b) for marker in added}
+        ) == 3
+
+        received.clear()
+        motor._last_speed["robot1"] = 0.0
+        motor._publish_robot_sounds()
+        _spin_until(
+            rclpy,
+            [motor, consumer],
+            lambda: any(
+                marker.action == Marker.DELETE
+                for message in received
+                for marker in message.markers
+            ),
+        )
+        deleted = [
+            marker
+            for message in received
+            for marker in message.markers
+            if marker.action == Marker.DELETE
+        ]
+        assert len(deleted) == 3
+    finally:
+        consumer.destroy_node()
+        motor.destroy_node()

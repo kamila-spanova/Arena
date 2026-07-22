@@ -54,6 +54,7 @@ setup(
             'robot_sound_node = task_generator.auditory.robot_sound_node:main',
             'robot_hearing_node = task_generator.auditory.robot_hearing_node:main',
             'auditory_benchmark = task_generator.auditory.benchmark:main',
+            'sound_propagation_visualizer = task_generator.auditory.sound_propagation_visualizer:main',
             # 'server = task_generator.server:main',
             # 'filewatcher = task_generator.filewatcher:main'
         ]

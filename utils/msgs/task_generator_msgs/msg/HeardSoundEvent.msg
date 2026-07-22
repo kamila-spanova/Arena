@@ -24,3 +24,11 @@ float32 reverb_rt60_sec
 float32 reverb_gain_db
 string source_zone
 string listener_zone
+
+# The model level is retained above for compatibility. These fields report
+# the backend that actually produced this event and any fallback decision.
+string propagation_backend
+bool used_backend_fallback
+string backend_fallback_reason
+string portal_id
+geometry_msgs/Point portal_position

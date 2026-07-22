@@ -16,6 +16,11 @@ class Voice:
     position: int = 0
     loop: bool = False
     gain: float = 1.0
+    voice_id: str | None = None
+    loop_sample: CachedSample | None = None
+    outro_sample: CachedSample | None = None
+    stage: str = "single"
+    stop_requested: bool = False
 
 
 class AudioMixer:
@@ -37,6 +42,42 @@ class AudioMixer:
         with self._lock:
             self._voices.append(voice)
 
+    def play_looping_sequence(
+        self,
+        intro: CachedSample,
+        loop_sample: CachedSample,
+        outro: CachedSample,
+        *,
+        voice_id: str,
+        gain_db: float = 0.0,
+    ) -> None:
+        """Play intro once, loop the middle, then play outro when stopped."""
+        voice = Voice(
+            sample=intro,
+            gain=10.0 ** (gain_db / 20.0),
+            voice_id=voice_id,
+            loop_sample=loop_sample,
+            outro_sample=outro,
+            stage="intro",
+        )
+        with self._lock:
+            # A duplicate start event replaces the previous motor voice rather
+            # than adding another permanent loop to the mix.
+            self._voices = [
+                active for active in self._voices
+                if active.voice_id != voice_id
+            ]
+            self._voices.append(voice)
+
+    def stop(self, voice_id: str) -> bool:
+        """Request a keyed sequence to leave its loop and play its outro."""
+        with self._lock:
+            for voice in self._voices:
+                if voice.voice_id == voice_id:
+                    voice.stop_requested = True
+                    return True
+        return False
+
     def stop_all(self) -> None:
         with self._lock:
             self._voices.clear()
@@ -57,8 +98,8 @@ class AudioMixer:
             for voice in self._voices:
                 written = 0
 
-                # if voice.sample.samples.size == 0 or len(voice.sample.samples) == 0:
-                #     raise ValueError(f"empty WAV file: {voice.sample.path}")
+                if voice.sample.samples.size == 0 or len(voice.sample.samples) == 0:
+                    raise ValueError(f"empty WAV file: {voice.sample.path}")
 
                 while written < frames:
                     remaining = len(voice.sample.samples) - voice.position
@@ -75,15 +116,51 @@ class AudioMixer:
                         written += count
 
                     if voice.position >= len(voice.sample.samples):
-                        if voice.loop:
-                            voice.position = 0
-                        else:
+                        if not self._advance_voice(voice):
                             break
 
-                if voice.loop or voice.position < len(voice.sample.samples):
+                if self._voice_is_active(voice):
                     active.append(voice)
 
             self._voices = active
 
         outdata *= self._master_gain
         np.clip(outdata, -1.0, 1.0, out=outdata)
+
+    @staticmethod
+    def _advance_voice(voice: Voice) -> bool:
+        """Move a voice to its next segment after its current sample ends."""
+        if voice.stage == "intro":
+            next_sample = (
+                voice.outro_sample
+                if voice.stop_requested else voice.loop_sample
+            )
+            if next_sample is None:
+                return False
+            voice.sample = next_sample
+            voice.position = 0
+            voice.stage = "outro" if voice.stop_requested else "loop"
+            return True
+
+        if voice.stage == "loop":
+            if voice.stop_requested:
+                if voice.outro_sample is None:
+                    return False
+                voice.sample = voice.outro_sample
+                voice.stage = "outro"
+            voice.position = 0
+            return True
+
+        if voice.stage == "outro":
+            return False
+
+        if voice.loop:
+            voice.position = 0
+            return True
+        return False
+
+    @staticmethod
+    def _voice_is_active(voice: Voice) -> bool:
+        if voice.position < len(voice.sample.samples):
+            return True
+        return voice.stage in {"intro", "loop"} or voice.loop
