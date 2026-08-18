@@ -382,7 +382,9 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
             )
 
             await self._world_manager.sync()
-            if flag_enabled(self, "debug", "map_server"):
+            if flag_enabled(self, "debug", "map_server") or bool(
+                self.get_parameter("auditory_enabled").value
+            ):
                 await self._world_manager.require_map_server()
             await self._robots_manager.launch_pending()
             self._publish_viz_manifest()

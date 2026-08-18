@@ -301,6 +301,8 @@ def generate_launch_description():
         atexit.register(_restore_terminal_titles)
 
         human_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(human.substitution)) or default_human(arena_sim)
+        auditory_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(auditory.substitution))
+        auditory_enabled = human_val == Constants.HumanSimulator.ARENA.value and auditory_val != "none"
         mobile_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(mobile.substitution)) or {"dummy": "none"}.get(arena_sim, "nav2")
         arm_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(arm.substitution))
         tm_modules_val = launch.utilities.perform_substitutions(
@@ -437,6 +439,7 @@ def generate_launch_description():
                     "use_sim_time": True,
                     "sim": arena_sim,
                     "human": human_val,
+                    "auditory_enabled": auditory_enabled,
                     "robot.mobile_adapter": mobile_val,
                     "robot.arm_adapter": arm_val,
                     **robot.str_param,
