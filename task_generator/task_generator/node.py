@@ -132,7 +132,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
     _world_manager: WorldManager
     _human_simulator: BaseHumanSimulator
     _environment_manager: EnvironmentManager
-    _robots_manager: RobotsManager
+    _robots_manager: RobotsManager | None = None
     _simulator: BaseSim
     _realizer: Realizer
     _arena_hold_client: ClientWrapper
@@ -205,7 +205,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
 
         self._reset_lock: asyncio.Lock = asyncio.Lock()
         self._start_time = self.time
-        self._task: Task
+        self._task: Task | None = None
 
         self._staged_obstacles_params: dict[str, ParameterValue] = {}
         self._staged_robots_params: dict[str, ParameterValue] = {}
@@ -428,8 +428,10 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         self._heartbeat_timer.cancel()
         if self._tick_loop_task is not None and not self._tick_loop_task.done():
             self._tick_loop_task.cancel()
-        await self._task.teardown()
-        await self._robots_manager.teardown()
+        if self._task is not None:
+            await self._task.teardown()
+        if self._robots_manager is not None:
+            await self._robots_manager.teardown()
 
     async def hold(self, reason: str) -> None:
         req = arena_runtime_msgs.srv.LifecycleHold.Request()

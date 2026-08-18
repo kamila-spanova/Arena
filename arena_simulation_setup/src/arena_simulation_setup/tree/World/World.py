@@ -1109,7 +1109,7 @@ class WorldIdentifier(Identifier[MultiLevelWorldView]):
             if not root.is_dir():
                 continue
             for name in os.listdir(root):
-                if name.lower() != 'readme.md' and name not in seen:
+                if (root / name).is_dir() and name not in seen:
                     seen.add(name)
                     yield WorldIdentifier(name)
 

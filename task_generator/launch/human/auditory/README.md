@@ -97,7 +97,7 @@ driven by signed left and right wheel velocity. The live controls are:
 ## Scenario radio and alarm systems
 
 The static-audio Task Generator module is enabled by default and automatically
-adds `audio_systems` to `tm_modules`. Set
+adds `audio_systems` to `task.modules`. Set
 leave `auditory.static_devices` empty to disable it. The selected scenario may
 contain a top-level `audio` section:
 
