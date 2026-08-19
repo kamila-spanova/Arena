@@ -64,6 +64,8 @@ public:
     void refreshAudioListenerRouting();
     void setAudioListenerRouting();
     void updateMicrophoneListeners(const std::string &data);
+    void selectSideMicrophone(const std::string &listener_id);
+    void syncSideMicrophoneButtons();
     void syncAudioListenerRouting(
         const std::vector<rclcpp::Parameter> &parameters,
         bool available);
@@ -107,6 +109,10 @@ protected:
     QGroupBox *motor_tuning_group{nullptr};
     QGroupBox *audio_listener_group{nullptr};
     QComboBox *audio_listener_id_combobox{nullptr};
+    QPushButton *left_microphone_button{nullptr};
+    QPushButton *right_microphone_button{nullptr};
+    std::string left_microphone_listener_id_;
+    std::string right_microphone_listener_id_;
     bool audio_listener_selection_pending_{false};
     QCheckBox *propagation_checkbox{nullptr};
     QCheckBox *environment_playback_checkbox{nullptr};

@@ -485,6 +485,12 @@ def test_propagation_runtime_toggle_stops_continuous_outputs(rclpy_context):
     propagation._robot_microphones = {
         "microphone1": (Point(), "map"),
         "microphone2": (Point(), "map"),
+        "robot1_left_mic": (Point(y=0.1), "map"),
+        "robot1_right_mic": (Point(y=-0.1), "map"),
+    }
+    propagation._robot_side_microphone_ids = {
+        "robot1_left_mic",
+        "robot1_right_mic",
     }
     propagation._map = OccupancyGrid()
     propagation._map.header.frame_id = "map"
@@ -502,7 +508,11 @@ def test_propagation_runtime_toggle_stops_continuous_outputs(rclpy_context):
             ),
         ])
         assert selection_results[0].successful is True
-        assert set(propagation._microphone_positions()) == {"microphone1"}
+        assert set(propagation._microphone_positions()) == {
+            "microphone1",
+            "robot1_left_mic",
+            "robot1_right_mic",
+        }
         assert propagation._last_continuous_outputs[key].active is True
         assert propagation._last_continuous_outputs[excluded_key].active is False
         assert propagation._last_continuous_outputs[robot_key].active is True
@@ -616,6 +626,38 @@ def test_propagation_reconciles_robot_odom_subscriptions(rclpy_context):
         )
         assert robot_mic_position.z == 0.35
         assert robot_mic_frame == "robot1/base_link"
+        assert propagation._robot_side_microphone_ids == {
+            "robot1_left_mic",
+            "robot1_right_mic",
+        }
+        left_mic_position, left_mic_frame = (
+            propagation._robot_microphones["robot1_left_mic"]
+        )
+        right_mic_position, right_mic_frame = (
+            propagation._robot_microphones["robot1_right_mic"]
+        )
+        assert (
+            left_mic_position.x,
+            left_mic_position.y,
+            left_mic_position.z,
+        ) == (0.0, 0.1, 0.35)
+        assert (
+            right_mic_position.x,
+            right_mic_position.y,
+            right_mic_position.z,
+        ) == (0.0, -0.1, 0.35)
+        assert left_mic_frame == right_mic_frame == "robot1/base_link"
+        marker_poses = propagation._microphone_marker_poses()
+        assert marker_poses["robot1_left_mic"][1] == "robot1/base_link"
+        assert marker_poses["robot1_right_mic"][1] == "robot1/base_link"
+        left_color = propagation._microphone_marker_color(
+            "robot1_left_mic"
+        )
+        right_color = propagation._microphone_marker_color(
+            "robot1_right_mic"
+        )
+        assert left_color.b > left_color.r
+        assert right_color.r > right_color.b
 
         propagation._cb_robot_fleet(fleet)
         assert propagation._odom_subs.keys() == first.keys()
@@ -629,6 +671,9 @@ def test_propagation_reconciles_robot_odom_subscriptions(rclpy_context):
         assert propagation._odom_subs == {}
         assert "robot:robot1" not in propagation._robots
         assert "robot1_mic" not in propagation._robot_microphones
+        assert "robot1_left_mic" not in propagation._robot_microphones
+        assert "robot1_right_mic" not in propagation._robot_microphones
+        assert propagation._robot_side_microphone_ids == set()
     finally:
         propagation.destroy_node()
 
@@ -694,6 +739,7 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
     consumer = rclpy.create_node(f"auditory_roundtrip_consumer_{suffix}")
 
     heard_by_robot: list[HeardSoundEvent] = []
+    propagated_events: list[HeardSoundEvent] = []
     markers: list[Marker] = []
 
     fleet_pub = emitter.create_publisher(RobotFleet, robot_fleet_topic, acoustic_metadata_qos())
@@ -704,6 +750,12 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
         HeardSoundEvent,
         robot_heard_topic,
         heard_by_robot.append,
+        transient_event_qos(),
+    )
+    consumer.create_subscription(
+        HeardSoundEvent,
+        heard_topic,
+        propagated_events.append,
         transient_event_qos(),
     )
     consumer.create_subscription(Marker, robot_marker_topic, markers.append, 10)
@@ -761,12 +813,20 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
         event.sound_type = "greeting"
         event.label = "greeting"
         event.asset_id = "greeting"
+        event.source_position.y = 1.0
         sound_pub.publish(event)
 
         _spin_until(
             rclpy,
             [emitter, propagation, hearing, consumer],
-            lambda: len(heard_by_robot) == 1 and len(markers) == 1,
+            lambda: len(heard_by_robot) == 1
+            and len(markers) == 1
+            and {
+                "robot1_left_mic",
+                "robot1_right_mic",
+            }.issubset(
+                {message.listener_id for message in propagated_events}
+            ),
             timeout_sec=5.0,
         )
 
@@ -775,6 +835,27 @@ def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
         assert heard.listener_id == "robot:robot1"
         assert heard.sound_type == "greeting"
         assert heard.audible is True
+
+        side_events = {
+            message.listener_id: message
+            for message in propagated_events
+            if message.listener_id
+            in {"robot1_left_mic", "robot1_right_mic"}
+        }
+        assert set(side_events) == {
+            "robot1_left_mic",
+            "robot1_right_mic",
+        }
+        assert side_events["robot1_left_mic"].listener_position.y == (
+            pytest.approx(0.1)
+        )
+        assert side_events["robot1_right_mic"].listener_position.y == (
+            pytest.approx(-0.1)
+        )
+        assert (
+            side_events["robot1_left_mic"].direct_delay_sec
+            < side_events["robot1_right_mic"].direct_delay_sec
+        )
 
         marker = markers[0]
         assert marker.ns == "robot1_heard_sound"

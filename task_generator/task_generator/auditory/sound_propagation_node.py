@@ -94,6 +94,10 @@ class SoundPropagationNode(Node):
             "continuous_heard_sounds",
         )
         self.declare_parameter("robot_microphones", "[]")
+        self.declare_parameter("robot_side_microphones", True)
+        self.declare_parameter("robot_side_microphone_separation_m", 0.20)
+        self.declare_parameter("robot_microphone_height_m", 0.35)
+        self.declare_parameter("robot_microphone_forward_offset_m", 0.0)
         self.declare_parameter("viewport_down_projection_height_m", 1.6)
         self.declare_parameter("enable_propagation", True)
         self.declare_parameter("active_microphone_id", "")
@@ -177,6 +181,7 @@ class SoundPropagationNode(Node):
             str(self.get_parameter("robot_microphones").value)
         )
         self._robot_microphones: dict[str, tuple[Point, str]] = {}
+        self._robot_side_microphone_ids: set[str] = set()
         self._world_microphones: dict[str, WorldMicrophoneSpec] = {}
         self._spawned_microphones: dict[str, tuple[Point, str]] = {}
         self._viewport_microphones: dict[str, tuple[Point, str]] = {}
@@ -377,6 +382,8 @@ class SoundPropagationNode(Node):
                 if key[1] not in microphone_ids:
                     continue
                 if key[1] == active_microphone_id:
+                    continue
+                if key[1] in self._robot_side_microphone_ids:
                     continue
             stopped = copy.deepcopy(previous)
             stopped.header.stamp = self.get_clock().now().to_msg()
@@ -833,13 +840,68 @@ class SoundPropagationNode(Node):
                 self._robots.pop(listener_id, None)
                 self._robot_base_frames.pop(listener_id, None)
 
+        microphone_height = float(
+            self.get_parameter("robot_microphone_height_m").value
+        )
+        microphone_forward_offset = float(
+            self.get_parameter("robot_microphone_forward_offset_m").value
+        )
+        side_microphone_separation = float(
+            self.get_parameter("robot_side_microphone_separation_m").value
+        )
+        if not all(
+            math.isfinite(value)
+            for value in (
+                microphone_height,
+                microphone_forward_offset,
+                side_microphone_separation,
+            )
+        ):
+            self.get_logger().warning(
+                "robot microphone geometry must be finite; using defaults"
+            )
+            microphone_height = 0.35
+            microphone_forward_offset = 0.0
+            side_microphone_separation = 0.20
+        if side_microphone_separation <= 0.0:
+            self.get_logger().warning(
+                "robot side microphone separation must be positive; "
+                "using 0.20 m"
+            )
+            side_microphone_separation = 0.20
+
         automatic_microphones = {
             f"{name}_mic": (
-                Point(z=0.35),
+                Point(
+                    x=microphone_forward_offset,
+                    z=microphone_height,
+                ),
                 self._robot_base_frames[f"robot:{name}"],
             )
             for name in active_names
         }
+        automatic_side_microphones: dict[str, tuple[Point, str]] = {}
+        if bool(self.get_parameter("robot_side_microphones").value):
+            half_separation = 0.5 * side_microphone_separation
+            for name in active_names:
+                frame_id = self._robot_base_frames[f"robot:{name}"]
+                automatic_side_microphones[f"{name}_left_mic"] = (
+                    Point(
+                        x=microphone_forward_offset,
+                        y=half_separation,
+                        z=microphone_height,
+                    ),
+                    frame_id,
+                )
+                automatic_side_microphones[f"{name}_right_mic"] = (
+                    Point(
+                        x=microphone_forward_offset,
+                        y=-half_separation,
+                        z=microphone_height,
+                    ),
+                    frame_id,
+                )
+        self._robot_side_microphone_ids = set(automatic_side_microphones)
         configured_microphones = {
             spec.listener_id: (
                 Point(),
@@ -850,6 +912,7 @@ class SoundPropagationNode(Node):
         }
         self._robot_microphones = {
             **automatic_microphones,
+            **automatic_side_microphones,
             **configured_microphones,
         }
         configured_robots = {
@@ -882,7 +945,6 @@ class SoundPropagationNode(Node):
     def _publish_microphone_markers(self) -> None:
         stamp = self.get_clock().now().to_msg()
         markers = []
-        color = ColorRGBA(r=0.12, g=0.95, b=0.45, a=0.85)
         for index, (listener_id, (position, frame_id)) in enumerate(
             sorted(self._microphone_marker_poses().items())
         ):
@@ -895,7 +957,7 @@ class SoundPropagationNode(Node):
             marker.action = Marker.ADD
             marker.pose.orientation.w = 1.0
             marker.scale.x = marker.scale.y = marker.scale.z = 1.0
-            marker.color = color
+            marker.color = self._microphone_marker_color(listener_id)
             marker.lifetime.sec = 1
             apex = Point(
                 x=float(position.x) + 0.28,
@@ -945,11 +1007,24 @@ class SoundPropagationNode(Node):
             )
             label.pose.orientation.w = 1.0
             label.scale.z = 0.18
-            label.color = ColorRGBA(r=0.05, g=0.35, b=0.12, a=1.0)
+            label.color = ColorRGBA(
+                r=marker.color.r * 0.45,
+                g=marker.color.g * 0.45,
+                b=marker.color.b * 0.45,
+                a=1.0,
+            )
             label.lifetime = marker.lifetime
             label.text = listener_id
             markers.extend((marker, label))
         self._microphone_marker_pub.publish(MarkerArray(markers=markers))
+
+    @staticmethod
+    def _microphone_marker_color(listener_id: str) -> ColorRGBA:
+        if listener_id.endswith("_left_mic"):
+            return ColorRGBA(r=0.05, g=0.65, b=1.0, a=0.9)
+        if listener_id.endswith("_right_mic"):
+            return ColorRGBA(r=1.0, g=0.55, b=0.05, a=0.9)
+        return ColorRGBA(r=0.12, g=0.95, b=0.45, a=0.85)
 
     def _microphone_marker_poses(
         self,
@@ -1348,12 +1423,17 @@ class SoundPropagationNode(Node):
 
     def _microphone_positions(self) -> dict[str, Point]:
         listeners = self._all_microphone_positions()
+        active_listeners = {
+            listener_id: listeners[listener_id]
+            for listener_id in self._robot_side_microphone_ids
+            if listener_id in listeners
+        }
         selected = str(
             self.get_parameter("active_microphone_id").value
         ).strip()
-        if selected not in listeners:
-            return {}
-        return {selected: listeners[selected]}
+        if selected in listeners:
+            active_listeners[selected] = listeners[selected]
+        return active_listeners
 
     def _all_microphone_positions(self) -> dict[str, Point]:
         listeners: dict[str, Point] = {}
@@ -1712,7 +1792,7 @@ class SoundPropagationNode(Node):
         msg.audible = received >= threshold
         msg.occluded = occluded
         msg.bearing_rad = float(math.atan2(dy, dx))
-        msg.direct_delay_sec = float(effective_distance / 343.0)
+        msg.direct_delay_sec = float(geometric_distance / 343.0)
         msg.propagation_level = 0
         msg.reverb_rt60_sec = 0.0
         msg.reverb_gain_db = 0.0

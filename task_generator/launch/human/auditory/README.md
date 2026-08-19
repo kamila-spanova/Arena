@@ -233,10 +233,24 @@ used.
 
 ## Microphones and playback routing
 
-Every robot in `state/robots` automatically creates one microphone named from
-the robot instance, for example `robot1_mic` and `robot2_mic`. It follows the
-robot base TF frame and appears as a green triangular cone in RViz. This makes
-multi-robot microphone testing available without extra launch arguments.
+Every robot in `state/robots` automatically creates a center microphone and a
+left/right pair named from the robot instance, for example `robot1_mic`,
+`robot1_left_mic`, and `robot1_right_mic`. All three follow the robot base TF
+frame. The side microphones are 20 cm apart at 0.35 m height by default, with
+left at positive robot y and right at negative robot y. RViz renders the center
+microphone green, the left microphone blue, and the right microphone orange.
+
+Both side microphones remain propagation listeners at the same time so their
+listener-specific delays and levels can later feed a direction-of-arrival
+estimator. The **Left microphone** and **Right microphone** buttons in the
+Auditory panel select which one feeds mono workstation playback; the existing
+dropdown remains available for every other listener. Playback selection does
+not disable propagation to either side microphone.
+
+The propagation-node parameters `robot_side_microphones`,
+`robot_side_microphone_separation_m`, `robot_microphone_height_m`, and
+`robot_microphone_forward_offset_m` control the automatic pair. Their defaults
+are `true`, `0.20`, `0.35`, and `0.0` respectively.
 
 Additional robot-mounted microphones can be configured with
 `auditory.microphones`. Each entry names the robot instance, placement,
@@ -309,10 +323,68 @@ share `heard_sound_events` and `continuous_heard_sounds`; the playback nodes
 filter those streams, render the selected feeds, and send the result to their
 configured workstation `audio_device`.
 
-The RViz dropdown applies one microphone ID to propagation,
-`human_sound_playback`, `robot_sound_node`, and
-`environment_sound_playback`. For a non-RViz workflow, set
-`auditory.listener:=robot1_mic` or another registered microphone ID at launch.
+The RViz dropdown applies one microphone ID to `human_sound_playback`,
+`robot_sound_node`, and `environment_sound_playback`, and keeps that selected
+listener in propagation. The robot left/right pair is always propagated in
+addition. For a non-RViz workflow, set `auditory.listener:=robot1_mic` or
+another registered microphone ID at launch.
+
+### Verify robot side microphones
+
+Start one Jackal, a looping test radio, propagation visualization, and local
+playback:
+
+```bash
+arena launch \
+  world:=map_empty \
+  robot:=jackal \
+  auditory:=arena \
+  auditory.viz:=true \
+  auditory.static_devices:='[{name: mic_test_radio, sound_type: music, asset_id: radio_loop, loop: true, initially_active: true, emitters: [{name: speaker, position: [2.0, 2.0, 1.2], source_volume_db: 80.0}]}]'
+```
+
+In another shell, confirm registration and RViz marker publication:
+
+```bash
+ros2 topic echo \
+  /arena/env_0/task_generator_node/microphone_listeners \
+  --once
+
+ros2 topic echo \
+  /arena/env_0/task_generator_node/microphone_markers \
+  --once --field markers
+```
+
+The registry must contain `<robot>_left_mic` and `<robot>_right_mic`. In RViz,
+enable `Arena/Sound Propagation/Microphones`; the blue and orange cones must
+move and rotate with the robot. Click **Left microphone** and **Right
+microphone** under **Audio Playback Microphone** to compare playback. Confirm
+that the selection reached all playback nodes and propagation, replacing
+`jackal_left_mic` if the registry shows a different robot name:
+
+```bash
+ros2 param get \
+  /arena/env_0/task_generator_node/human_sound_playback listener_id
+ros2 param get \
+  /arena/env_0/task_generator_node/robot_sound_node listener_id
+ros2 param get \
+  /arena/env_0/task_generator_node/environment_sound_playback listener_id
+ros2 param get \
+  /arena/env_0/task_generator_node/sound_propagation_node active_microphone_id
+```
+
+Finally, confirm that propagation continues to publish both side listeners,
+regardless of which playback button is selected:
+
+```bash
+ros2 topic echo \
+  /arena/env_0/task_generator_node/continuous_heard_sounds \
+  --field listener_id
+```
+
+The stream must repeatedly contain both `<robot>_left_mic` and
+`<robot>_right_mic`. Finite greetings and footsteps can be checked similarly
+on `heard_sound_events`.
 
 When the simulator viewport publishes `/arena/viewport/camera_pose`, two more
 listeners appear in the same dropdown:

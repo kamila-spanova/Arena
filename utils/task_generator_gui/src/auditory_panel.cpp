@@ -1,6 +1,7 @@
 #include "task_generator_gui/auditory_panel.hpp"
 #include "rviz_common/display_context.hpp"
 
+#include <QHBoxLayout>
 #include <QJsonArray>
 
 #include <array>
@@ -663,8 +664,133 @@ namespace task_generator_gui
             if (selected_index >= 0)
                 audio_listener_id_combobox->setCurrentIndex(selected_index);
         }
+        syncSideMicrophoneButtons();
         if (audio_listener_id_combobox->currentText() != selected)
             setAudioListenerRouting();
+    }
+
+    void AuditoryPanel::selectSideMicrophone(
+        const std::string &listener_id)
+    {
+        if (!audio_listener_id_combobox || listener_id.empty())
+            return;
+        const int index = audio_listener_id_combobox->findText(
+            QString::fromStdString(listener_id));
+        if (index < 0)
+            return;
+        if (audio_listener_id_combobox->currentIndex() == index)
+        {
+            syncSideMicrophoneButtons();
+            return;
+        }
+        audio_listener_id_combobox->setCurrentIndex(index);
+    }
+
+    void AuditoryPanel::syncSideMicrophoneButtons()
+    {
+        if (!audio_listener_id_combobox
+            || !left_microphone_button
+            || !right_microphone_button)
+        {
+            return;
+        }
+
+        constexpr auto left_suffix = "_left_mic";
+        constexpr auto right_suffix = "_right_mic";
+        const QString selected = audio_listener_id_combobox->currentText();
+        QString preferred_prefix;
+        if (selected.endsWith(left_suffix))
+        {
+            preferred_prefix = selected;
+            preferred_prefix.chop(QString(left_suffix).size());
+        }
+        else if (selected.endsWith(right_suffix))
+        {
+            preferred_prefix = selected;
+            preferred_prefix.chop(QString(right_suffix).size());
+        }
+        else if (selected.endsWith("_mic"))
+        {
+            preferred_prefix = selected;
+            preferred_prefix.chop(4);
+        }
+
+        auto pair_exists = [this, left_suffix, right_suffix](
+                               const QString &prefix)
+        {
+            return !prefix.isEmpty()
+                && audio_listener_id_combobox->findText(
+                    prefix + left_suffix) >= 0
+                && audio_listener_id_combobox->findText(
+                    prefix + right_suffix) >= 0;
+        };
+
+        if (!pair_exists(preferred_prefix))
+        {
+            const QString previous_left = QString::fromStdString(
+                left_microphone_listener_id_);
+            if (previous_left.endsWith(left_suffix))
+            {
+                QString previous_prefix = previous_left;
+                previous_prefix.chop(QString(left_suffix).size());
+                if (pair_exists(previous_prefix))
+                    preferred_prefix = previous_prefix;
+            }
+        }
+        if (!pair_exists(preferred_prefix))
+        {
+            preferred_prefix.clear();
+            for (int index = 0;
+                 index < audio_listener_id_combobox->count();
+                 ++index)
+            {
+                QString candidate = audio_listener_id_combobox->itemText(index);
+                if (!candidate.endsWith(left_suffix))
+                    continue;
+                candidate.chop(QString(left_suffix).size());
+                if (pair_exists(candidate))
+                {
+                    preferred_prefix = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (pair_exists(preferred_prefix))
+        {
+            left_microphone_listener_id_ =
+                (preferred_prefix + left_suffix).toStdString();
+            right_microphone_listener_id_ =
+                (preferred_prefix + right_suffix).toStdString();
+        }
+        else
+        {
+            left_microphone_listener_id_.clear();
+            right_microphone_listener_id_.clear();
+        }
+
+        const bool pair_available = !left_microphone_listener_id_.empty()
+            && !right_microphone_listener_id_.empty();
+        {
+            QSignalBlocker blocker(left_microphone_button);
+            left_microphone_button->setEnabled(pair_available);
+            left_microphone_button->setChecked(
+                selected.toStdString() == left_microphone_listener_id_);
+            left_microphone_button->setToolTip(
+                pair_available
+                    ? QString::fromStdString(left_microphone_listener_id_)
+                    : "Waiting for a robot left microphone.");
+        }
+        {
+            QSignalBlocker blocker(right_microphone_button);
+            right_microphone_button->setEnabled(pair_available);
+            right_microphone_button->setChecked(
+                selected.toStdString() == right_microphone_listener_id_);
+            right_microphone_button->setToolTip(
+                pair_available
+                    ? QString::fromStdString(right_microphone_listener_id_)
+                    : "Waiting for a robot right microphone.");
+        }
     }
 
     void AuditoryPanel::setAudioListenerRouting()
@@ -749,6 +875,7 @@ namespace task_generator_gui
             audio_listener_id_combobox->findText(selected);
         if (selected_index >= 0)
             audio_listener_id_combobox->setCurrentIndex(selected_index);
+        syncSideMicrophoneButtons();
     }
 
     void AuditoryPanel::refreshAuditoryControls()
@@ -1009,11 +1136,40 @@ namespace task_generator_gui
             this,
             [this](const QString &)
             {
+                syncSideMicrophoneButtons();
                 setAudioListenerRouting();
             });
         audio_listener_layout->addRow(
             "Listen through",
             audio_listener_id_combobox);
+        auto side_microphone_layout = new QHBoxLayout();
+        left_microphone_button = new QPushButton("Left microphone");
+        left_microphone_button->setCheckable(true);
+        left_microphone_button->setEnabled(false);
+        connect(
+            left_microphone_button,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                selectSideMicrophone(left_microphone_listener_id_);
+            });
+        right_microphone_button = new QPushButton("Right microphone");
+        right_microphone_button->setCheckable(true);
+        right_microphone_button->setEnabled(false);
+        connect(
+            right_microphone_button,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                selectSideMicrophone(right_microphone_listener_id_);
+            });
+        side_microphone_layout->addWidget(left_microphone_button);
+        side_microphone_layout->addWidget(right_microphone_button);
+        audio_listener_layout->addRow(
+            "Robot side",
+            side_microphone_layout);
         if (!microphone_listener_registry_.empty())
             updateMicrophoneListeners(microphone_listener_registry_);
         audio_listener_group->setLayout(audio_listener_layout);

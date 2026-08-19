@@ -64,6 +64,14 @@ mechanical-noise level, velocity response, and response smoothing controls.
 Edits are applied to active procedural drivetrain voices without restarting an
 episode. `Reset motor tuning` restores the quieter procedural defaults.
 
+`Audio Playback Microphone` includes **Left microphone** and **Right
+microphone** quick-selection buttons when the registry contains a robot side
+pair. They route human, robot, and environment playback through that listener.
+Both side microphones remain active propagation listeners; the buttons only
+choose the mono workstation playback feed. With multiple robots, the buttons
+follow the pair belonging to the currently selected robot, or the first
+complete pair when no robot listener is selected.
+
 ## SpawnPedestrianTool
 
 Subclass of `rviz_default_plugins::tools::PoseTool`. Click+drag in the 3D view to set position and yaw; the tool then calls `<Target>/runtime/spawn_dynamic` with `use_pose=true`, the clicked `PoseStamped` (in the rviz Fixed Frame), and the `Model` string. Both `Target` and `Model` are exposed as Tool Properties; `Model` defaults to `arenian`. Shortcut key: `p`.
