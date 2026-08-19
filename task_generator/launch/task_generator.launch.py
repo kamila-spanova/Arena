@@ -302,7 +302,10 @@ def generate_launch_description():
 
         human_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(human.substitution)) or default_human(arena_sim)
         auditory_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(auditory.substitution))
-        auditory_enabled = human_val == Constants.HumanSimulator.ARENA.value and auditory_val != "none"
+        # Robot microphones, propagation, and playback do not depend on the
+        # selected human simulator.  Human sound production is gated inside
+        # human.launch.py when Arena HumanSim is selected.
+        auditory_enabled = auditory_val != "none"
         mobile_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(mobile.substitution)) or {"dummy": "none"}.get(arena_sim, "nav2")
         arm_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(arm.substitution))
         tm_modules_val = launch.utilities.perform_substitutions(

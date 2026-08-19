@@ -1,8 +1,10 @@
 # Auditory Module
 
-The auditory module adds sound events to the Arena human simulation path. It is
-enabled by default when the Arena human simulator is selected. Set
-`auditory:=none` (the default) runs without the auditory nodes; `auditory:=arena` enables them.
+The auditory module adds robot microphones, propagation, hearing, and local
+playback independently of the selected human simulator. `auditory:=none` (the
+default) runs without the auditory nodes; `auditory:=arena` enables them.
+Human footsteps and greetings are additionally produced when Arena HumanSim is
+selected.
 
 ## Features
 
@@ -41,7 +43,7 @@ Expected nodes when enabled include:
 - `robot_hearing_node`
 - `human_sound_playback`
 - `environment_sound_playback`
-- `sound_propagation_visualizer` (enabled by default with the auditory module)
+- `sound_propagation_visualizer` (enabled with `auditory.viz:=true`)
 
 ## Main Topics
 
@@ -348,7 +350,7 @@ In another shell, confirm registration and RViz marker publication:
 ```bash
 ros2 topic echo \
   /arena/env_0/task_generator_node/microphone_listeners \
-  --once
+  --qos-durability transient_local --once
 
 ros2 topic echo \
   /arena/env_0/task_generator_node/microphone_markers \

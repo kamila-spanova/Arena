@@ -295,13 +295,14 @@ class SoundPropagationNode(Node):
             self.get_parameter("propagation_backend").value
         )
         self._requested_backend = backend
+        self._backend_init_fallback_reason = ""
 
         self._pra_adapter = None
 
         if backend == "pyroomacoustics":
             try:
-                # The adapter keeps PRA optional for the Level3 backend, but
-                # fail fast when the user explicitly selected this backend.
+                # Keep PRA optional. Initialization failure falls back to the
+                # Level-3 model below without taking microphone services down.
                 import pyroomacoustics  # noqa: F401
 
                 pra_config = PyroomacousticsConfig(
@@ -333,10 +334,14 @@ class SoundPropagationNode(Node):
                     pra_config,
                 )
             except (ImportError, PyroomacousticsUnavailableError, ValueError) as exc:
-                raise RuntimeError(
-                    "pyroomacoustics backend requested but could not be "
-                    f"initialized: {exc}"
-                ) from exc
+                self._backend_init_fallback_reason = (
+                    "pyroomacoustics_initialization_failed:"
+                    f"{type(exc).__name__}"
+                )
+                self.get_logger().warning(
+                    "pyroomacoustics backend could not be initialized; "
+                    f"using Level-3 propagation instead: {exc}"
+                )
         elif backend != "level3":
             raise ValueError(
                 "propagation_backend must be 'level3' or "
@@ -1832,7 +1837,7 @@ class SoundPropagationNode(Node):
                 fallback_reason="level3_self_hearing_uses_legacy_distance",
             )
 
-        fallback_reason = ""
+        fallback_reason = self._backend_init_fallback_reason
         deferred_same_room = False
         deferred_route = None
         compute_rir_here = bool(

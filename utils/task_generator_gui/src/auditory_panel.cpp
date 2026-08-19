@@ -293,6 +293,7 @@ namespace task_generator_gui
                 }
                 if (msg->node == propagation_node)
                 {
+                    refreshAudioListenerRouting();
                     refreshAuditoryControls();
                     return;
                 }
@@ -304,12 +305,9 @@ namespace task_generator_gui
             },
             [this]() { refreshMotorPlayback(); });
         whenReady(
-            [this]()
+            [client = propagation_parameters_client]()
             {
-                return motor_playback_parameters_client->service_is_ready()
-                    && human_playback_parameters_client->service_is_ready()
-                    && environment_playback_parameters_client->service_is_ready()
-                    && propagation_parameters_client->service_is_ready();
+                return client->service_is_ready();
             },
             [this]()
             {
@@ -317,12 +315,12 @@ namespace task_generator_gui
                     setAudioListenerRouting();
                 else
                     refreshAudioListenerRouting();
+                refreshAuditoryControls();
             });
         whenReady(
-            [this]()
+            [client = environment_playback_parameters_client]()
             {
-                return propagation_parameters_client->service_is_ready()
-                    && environment_playback_parameters_client->service_is_ready();
+                return client->service_is_ready();
             },
             [this]() { refreshAuditoryControls(); });
     }
@@ -566,13 +564,7 @@ namespace task_generator_gui
     {
         if (audio_listener_selection_pending_)
         {
-            if (motor_playback_parameters_client
-                && human_playback_parameters_client
-                && environment_playback_parameters_client
-                && propagation_parameters_client
-                && motor_playback_parameters_client->service_is_ready()
-                && human_playback_parameters_client->service_is_ready()
-                && environment_playback_parameters_client->service_is_ready()
+            if (propagation_parameters_client
                 && propagation_parameters_client->service_is_ready())
             {
                 setAudioListenerRouting();
@@ -584,13 +576,7 @@ namespace task_generator_gui
             }, Qt::QueuedConnection);
             return;
         }
-        if (!motor_playback_parameters_client
-            || !human_playback_parameters_client
-            || !environment_playback_parameters_client
-            || !propagation_parameters_client
-            || !motor_playback_parameters_client->service_is_ready()
-            || !human_playback_parameters_client->service_is_ready()
-            || !environment_playback_parameters_client->service_is_ready()
+        if (!propagation_parameters_client
             || !propagation_parameters_client->service_is_ready())
         {
             QMetaObject::invokeMethod(this, [this]()
@@ -599,8 +585,8 @@ namespace task_generator_gui
             }, Qt::QueuedConnection);
             return;
         }
-        motor_playback_parameters_client->get_parameters(
-            {"listener_id"},
+        propagation_parameters_client->get_parameters(
+            {"active_microphone_id"},
             [this](std::shared_future<std::vector<rclcpp::Parameter>> future)
             {
                 std::vector<rclcpp::Parameter> parameters;
@@ -797,9 +783,7 @@ namespace task_generator_gui
     {
         if (!audio_listener_id_combobox)
             return;
-        if (!motor_playback_parameters_client->service_is_ready()
-            || !human_playback_parameters_client->service_is_ready()
-            || !environment_playback_parameters_client->service_is_ready()
+        if (!propagation_parameters_client
             || !propagation_parameters_client->service_is_ready())
         {
             audio_listener_selection_pending_ = true;
@@ -817,6 +801,8 @@ namespace task_generator_gui
                                   const std::shared_ptr<rclcpp::AsyncParametersClient> &client,
                                   const char *node_name)
         {
+            if (!client || !client->service_is_ready())
+                return;
             client->set_parameters(
                 parameters,
                 [this, node_name](

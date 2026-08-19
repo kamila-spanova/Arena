@@ -48,9 +48,11 @@ All service paths are relative to the task_generator node namespace (default `/t
 
 Sibling panel with the same `Target` config key. Its parameter clients target
 `<Target>/robot_sound_node`, `<Target>/human_sound_playback`,
-`<Target>/environment_sound_playback`, and `<Target>/sound_propagation_node`;
-every group stays disabled until the matching node's parameter service appears,
-so the panel is inert under `auditory:=none`.
+`<Target>/environment_sound_playback`, and `<Target>/sound_propagation_node`.
+Each group becomes available when its matching node appears. Microphone routing
+uses propagation as its authoritative state and updates every playback node
+that is currently available, so one missing local playback node does not
+disable the microphone controls. The panel is inert under `auditory:=none`.
 
 `Play robot motor audio on this workstation` controls the live
 `enable_motor_playback` parameter on `<Target>/robot_sound_node`. It mutes

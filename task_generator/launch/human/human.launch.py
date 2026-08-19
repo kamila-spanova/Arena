@@ -236,6 +236,13 @@ def generate_launch_description():
                     ]),
                 }],
             ),
+        ])
+    )
+
+    # The robot auditory stack is independent of the selected human simulator.
+    # Only human_sound_node above depends on Arena HumanSim's arena_peds topic.
+    auditory_stack = launch.actions.GroupAction(
+        [
             # 1. Sound propagation node
             Node(
                 package='task_generator',
@@ -434,7 +441,7 @@ def generate_launch_description():
                     **playback_parameters,
                 }],
             ),
-        ])
+        ]
     )
 
     simulator = LaunchArgument(
@@ -445,6 +452,7 @@ def generate_launch_description():
     ld = launch.LaunchDescription([
         *ld,
         launch_human_simulator,
+        auditory_stack,
     ])
     return ld
 
