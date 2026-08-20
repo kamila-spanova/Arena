@@ -1424,6 +1424,23 @@ def test_propagation_visualizer_splits_pedestrian_and_robot_markers(
             )
         ]
         assert len(stale_portals) == 2
+
+        marker_count = len(robot_markers)
+        four_mic_event = _make_heard_sound_event()
+        four_mic_event.listener_id = "jackal_mic_front_left"
+        four_mic_event.listener_position.z = 0.22
+        visualizer._callback(four_mic_event)
+        _spin_until(
+            rclpy,
+            [visualizer, consumer],
+            lambda: len(robot_markers) > marker_count,
+        )
+        microphone_listener = next(
+            marker
+            for marker in robot_markers[-1].markers
+            if marker.ns == "jackal_mic_front_left_sound_listener"
+        )
+        assert microphone_listener.pose.position.z == pytest.approx(0.22)
     finally:
         consumer.destroy_node()
         visualizer.destroy_node()

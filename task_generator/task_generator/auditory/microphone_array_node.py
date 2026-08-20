@@ -435,7 +435,14 @@ class MicrophoneArrayNode(Node):
         self._raw_pub.publish(self._audio_frame(raw, stamp, CHANNEL_NAMES))
         for index, publisher in enumerate(self._channel_pubs):
             publisher.publish(self._audio_frame(raw[index:index + 1], stamp, (CHANNEL_NAMES[index],)))
-        self._hearing_pub.publish(self._audio_frame(hearing[None, :], stamp, ("hearing",)))
+        self._hearing_pub.publish(
+            self._audio_frame(
+                hearing[None, :],
+                stamp,
+                ("hearing",),
+                spatial=False,
+            )
+        )
         self._headphone_left_pub.publish(self._audio_frame(stereo[0:1], stamp, ("left",), spatial=False))
         self._headphone_right_pub.publish(self._audio_frame(stereo[1:2], stamp, ("right",), spatial=False))
         self._headphone_pub.publish(self._audio_frame(stereo, stamp, ("left", "right"), spatial=False))

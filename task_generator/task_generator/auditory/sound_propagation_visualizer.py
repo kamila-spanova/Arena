@@ -1192,9 +1192,17 @@ class SoundPropagationVisualizer(Node):
 
     @staticmethod
     def _listener_height(listener_id: str, listener_z: float = 0.0) -> float:
-        if listener_id.startswith("microphone") or listener_id.endswith("_mic"):
+        if SoundPropagationVisualizer._is_microphone_listener(listener_id):
             return listener_z
         return 0.35 if listener_id.startswith("robot:") else 1.60
+
+    @staticmethod
+    def _is_microphone_listener(listener_id: str) -> bool:
+        return (
+            listener_id.startswith("microphone")
+            or listener_id.endswith("_mic")
+            or "_mic_" in listener_id
+        )
 
     @staticmethod
     def _stable_marker_base(key: str, width: int) -> int:
@@ -1236,7 +1244,7 @@ class SoundPropagationVisualizer(Node):
                 "robot",
                 ColorRGBA(r=0.65, g=0.20, b=1.0, a=0.92),
             )
-        if listener_id.startswith("microphone") or listener_id.endswith("_mic"):
+        if self._is_microphone_listener(listener_id):
             listener_kind = listener_id.replace(":", "_").replace("/", "_")
             return (
                 self._robot_publisher,
