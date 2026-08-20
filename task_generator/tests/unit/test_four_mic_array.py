@@ -13,7 +13,9 @@ from task_generator.auditory.spatial_audio import (
     geometric_delays_seconds,
     headphone_stereo,
     hearing_waveform,
+    monitor_amplify,
     rectangular_array,
+    streaming_fractional_delays,
     transform_array,
 )
 
@@ -114,3 +116,28 @@ def test_disable_mute_solo_and_reenable_controls() -> None:
     solo = apply_monitor_controls(audio, solo_channel="rear_left")
     assert np.array_equal(solo[2], audio[2])
     assert not np.any(solo[[0, 1, 3]])
+
+
+def test_monitor_gain_does_not_change_calibrated_raw_audio() -> None:
+    raw = np.asarray([0.001, -0.001, 0.02], dtype=np.float32)
+    monitored = monitor_amplify(raw, gain_db=40.0, limit=0.98)
+    np.testing.assert_allclose(monitored[:2], [0.1, -0.1], atol=1e-6)
+    assert monitored[2] == pytest.approx(0.98)
+    np.testing.assert_array_equal(raw, [0.001, -0.001, 0.02])
+
+
+def test_streaming_fractional_delays_retain_history_between_blocks() -> None:
+    first, history = streaming_fractional_delays(
+        np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
+        np.asarray([0.0, 1.5]),
+    )
+    np.testing.assert_allclose(first[0], [1.0, 2.0, 3.0, 4.0])
+    np.testing.assert_allclose(first[1], [0.0, 0.5, 1.5, 2.5])
+
+    second, _ = streaming_fractional_delays(
+        np.asarray([5.0, 6.0], dtype=np.float32),
+        np.asarray([0.0, 1.5]),
+        history,
+    )
+    np.testing.assert_allclose(second[0], [5.0, 6.0])
+    np.testing.assert_allclose(second[1], [3.5, 4.5])

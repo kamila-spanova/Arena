@@ -197,6 +197,80 @@ def headphone_stereo(
     return np.ascontiguousarray(np.clip(stereo, -1.0, 1.0), dtype=np.float32)
 
 
+def monitor_amplify(
+    samples: NDArray[np.floating],
+    *,
+    gain_db: float = 36.0,
+    limit: float = 0.98,
+) -> NDArray[np.float32]:
+    """Amplify calibrated microphone PCM for listening, with peak limiting.
+
+    Raw array products remain physically calibrated.  This function is only
+    for workstation monitoring, where a real microphone preamplifier and
+    headphone level control would otherwise be missing from the simulation.
+    """
+    if not math.isfinite(gain_db):
+        raise ValueError("monitor gain must be finite")
+    if not math.isfinite(limit) or not 0.0 < limit <= 1.0:
+        raise ValueError("monitor limit must be finite and in (0, 1]")
+    audio = np.asarray(samples, dtype=np.float32)
+    gain = 10.0 ** (gain_db / 20.0)
+    return np.ascontiguousarray(
+        np.clip(audio * gain, -limit, limit),
+        dtype=np.float32,
+    )
+
+
+def streaming_fractional_delays(
+    samples: NDArray[np.floating],
+    delay_samples: NDArray[np.floating],
+    history: NDArray[np.floating] | None = None,
+) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """Apply independent causal delays to one streaming mono block.
+
+    The returned channels share one source waveform and retain their history
+    across calls.  Growing a delay pads unavailable older samples with silence;
+    normal microphone motion changes delay gradually and keeps valid history.
+    """
+    mono = np.asarray(samples, dtype=np.float32).reshape(-1)
+    delays = np.asarray(delay_samples, dtype=np.float64).reshape(-1)
+    if delays.size == 0:
+        raise ValueError("at least one channel delay is required")
+    if not np.all(np.isfinite(delays)) or np.any(delays < 0.0):
+        raise ValueError("channel delays must be finite and non-negative")
+    required = max(int(math.ceil(float(np.max(delays)))) + 1, 1)
+    previous = (
+        np.zeros(required, dtype=np.float32)
+        if history is None
+        else np.asarray(history, dtype=np.float32).reshape(-1)
+    )
+    if previous.size < required:
+        previous = np.pad(previous, (required - previous.size, 0))
+    combined = np.concatenate((previous, mono))
+    origin = previous.size
+    output = np.zeros((delays.size, mono.size), dtype=np.float32)
+    frames = np.arange(mono.size, dtype=np.float64)
+    for channel, delay in enumerate(delays):
+        positions = origin + frames - delay
+        lower = np.floor(positions).astype(np.int64)
+        fraction = positions - lower
+        lower_valid = (lower >= 0) & (lower < combined.size)
+        output[channel, lower_valid] = (
+            combined[lower[lower_valid]]
+            * (1.0 - fraction[lower_valid])
+        )
+        upper = lower + 1
+        upper_valid = (
+            (fraction > 1e-12)
+            & (upper >= 0)
+            & (upper < combined.size)
+        )
+        output[channel, upper_valid] += (
+            combined[upper[upper_valid]] * fraction[upper_valid]
+        )
+    return output, np.ascontiguousarray(combined[-required:], dtype=np.float32)
+
+
 def gcc_phat(
     signal: NDArray[np.floating],
     reference: NDArray[np.floating],

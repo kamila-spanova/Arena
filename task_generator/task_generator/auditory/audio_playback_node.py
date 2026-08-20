@@ -816,6 +816,9 @@ class SoundPlaybackNode(Node):
                 phase_index=int(msg.deterministic_seed),
                 block_size=int(self.get_parameter("block_size").value),
                 channels=int(self.get_parameter("output_channels").value),
+                sample_rate=int(
+                    self.get_parameter("output_sample_rate").value
+                ),
                 rir_crossfade_seconds=float(
                     self.get_parameter("motor_rir_crossfade_sec").value
                 ),
@@ -933,6 +936,11 @@ class SoundPlaybackNode(Node):
             f"asset_cache_misses={self._catalog.cache_misses}, "
             f"asset_loads_pending={len(self._pending_asset_loads)}"
         )
+        if str(self.get_parameter("audio_device").value).strip() == "none":
+            self.get_logger().info(
+                "local playback is disabled for this node; " + message
+            )
+            return
         if self._heard_received > 0 and self._played_events == 0:
             self.get_logger().warning(message)
         elif (
@@ -942,7 +950,7 @@ class SoundPlaybackNode(Node):
         ):
             self._warned_no_heard_events = True
             self.get_logger().warning(
-                "audio stream is ready but no HeardSoundEvent has reached "
+                "acoustic scene is ready but no HeardSoundEvent has reached "
                 f"playback; {message}"
             )
         else:

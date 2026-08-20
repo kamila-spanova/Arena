@@ -236,6 +236,7 @@ class DrivetrainRenderSource:
         phase_index: int,
         block_size: int,
         channels: int,
+        sample_rate: int = JACKAL.sample_rate,
         volume_db: float,
         frequency_scale: float,
         tonal_gain_db: float,
@@ -246,20 +247,24 @@ class DrivetrainRenderSource:
     ) -> None:
         self.block_size = int(block_size)
         self.channels = int(channels)
+        self.sample_rate = int(sample_rate)
+        if self.sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        self._spec = JACKAL.replace(sample_rate=self.sample_rate)
         self._seed = int(field_seed) & 0xFFFFFFFF
         phase_index = int(phase_index) & 0x0FFFFFFF
-        prewarm(JACKAL, seed=self._seed)
+        prewarm(self._spec, seed=self._seed)
         # The bundled transfer contains recording-room and microphone colour.
         # Disable it so pyroomacoustics is the only simulated RIR.
         self._left = DrivetrainVoice(
-            JACKAL,
+            self._spec,
             index=phase_index * 2,
             count=2,
             seed=self._seed,
             transfer=False,
         )
         self._right = DrivetrainVoice(
-            JACKAL,
+            self._spec,
             index=phase_index * 2 + 1,
             count=2,
             seed=self._seed,
@@ -287,7 +292,7 @@ class DrivetrainRenderSource:
         self._convolver: PartitionedConvolver | None = None
         self._old_convolver: PartitionedConvolver | None = None
         self._crossfade_total = max(
-            int(JACKAL.sample_rate * rir_crossfade_seconds), 1
+            int(self.sample_rate * rir_crossfade_seconds), 1
         )
         self._crossfade_remaining = 0
         self._rir_signature: tuple[Hashable, ...] | None = None
@@ -369,7 +374,7 @@ class DrivetrainRenderSource:
         else:
             decay = np.exp(
                 -np.arange(1, frames + 1, dtype=np.float64)
-                / (JACKAL.sample_rate * velocity_smoothing_seconds)
+                / (self.sample_rate * velocity_smoothing_seconds)
             )
             left_speed = target_left + (self._current_left - target_left) * decay
             right_speed = (
@@ -433,7 +438,7 @@ class DrivetrainRenderSource:
     def finished(self) -> bool:
         with self._lock:
             velocity_tail_frames = int(
-                JACKAL.sample_rate
+                self.sample_rate
                 * self._velocity_smoothing_seconds
                 * 5.0
             )

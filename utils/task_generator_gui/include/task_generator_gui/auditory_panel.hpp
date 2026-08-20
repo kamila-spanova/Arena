@@ -128,6 +128,7 @@ protected:
     QCheckBox *array_visualization_checkbox{nullptr};
     QCheckBox *array_tdoa_checkbox{nullptr};
     QDoubleSpinBox *array_master_gain_spinbox{nullptr};
+    QDoubleSpinBox *array_monitor_gain_spinbox{nullptr};
     QDoubleSpinBox *array_front_gain_spinbox{nullptr};
     QDoubleSpinBox *array_rear_gain_spinbox{nullptr};
     QComboBox *array_solo_combobox{nullptr};

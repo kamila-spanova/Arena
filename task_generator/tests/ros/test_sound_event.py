@@ -727,6 +727,41 @@ def test_propagation_registers_four_mic_jackal_receivers(rclpy_context):
         propagation.destroy_node()
 
 
+def test_four_mic_array_renders_audible_event_to_nonzero_pcm(rclpy_context):
+    import rclpy
+    from std_msgs.msg import Float32MultiArray
+    from task_generator.auditory.microphone_array_node import MicrophoneArrayNode
+
+    suffix = f"t_{uuid.uuid4().hex[:8]}"
+    namespace = f"/test/{suffix}"
+    array = MicrophoneArrayNode(namespace=namespace)
+    consumer = rclpy.create_node(f"four_mic_consumer_{suffix}")
+    levels: list[Float32MultiArray] = []
+    consumer.create_subscription(
+        Float32MultiArray,
+        f"{namespace}/jackal/audio/hearing/energy",
+        levels.append,
+        10,
+    )
+
+    try:
+        array._on_fleet(_make_robot_fleet("jackal", f"{namespace}/jackal"))
+        for channel in ("front_left", "front_right", "rear_left", "rear_right"):
+            event = _make_heard_sound_event()
+            event.event_id = "human:1:four-mic-regression"
+            event.listener_id = f"jackal_mic_{channel}"
+            event.received_volume_db = 94.0
+            array._on_heard_event(event)
+        _spin_until(
+            rclpy,
+            [array, consumer],
+            lambda: any(message.data and max(message.data) > 1e-3 for message in levels),
+        )
+    finally:
+        consumer.destroy_node()
+        array.destroy_node()
+
+
 def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
     import rclpy
     from rclpy.parameter import Parameter

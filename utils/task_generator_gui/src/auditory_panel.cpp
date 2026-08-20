@@ -368,14 +368,15 @@ namespace task_generator_gui
         }
         microphone_array_parameters_client->get_parameters(
             {"enabled", "headphones_enabled", "mute_all", "master_gain",
-             "headphone_front_gain", "headphone_rear_gain", "solo_channel",
-             "monitor_mode", "visualization_enabled", "tdoa_enabled"},
+             "monitor_gain_db", "headphone_front_gain", "headphone_rear_gain",
+             "solo_channel", "monitor_mode", "visualization_enabled",
+             "tdoa_enabled"},
             [this](std::shared_future<std::vector<rclcpp::Parameter>> future)
             {
                 try
                 {
                     const auto values = future.get();
-                    if (values.size() != 10)
+                    if (values.size() != 11)
                         return;
                     QMetaObject::invokeMethod(this, [this, values]()
                     {
@@ -388,8 +389,8 @@ namespace task_generator_gui
                             array_tdoa_checkbox};
                         const std::array<bool, 5> states{
                             values[0].as_bool(), values[1].as_bool(),
-                            values[2].as_bool(), values[8].as_bool(),
-                            values[9].as_bool()};
+                            values[2].as_bool(), values[9].as_bool(),
+                            values[10].as_bool()};
                         for (std::size_t index = 0; index < boxes.size(); ++index)
                         {
                             QSignalBlocker blocker(boxes[index]);
@@ -400,22 +401,26 @@ namespace task_generator_gui
                             array_master_gain_spinbox->setValue(values[3].as_double());
                         }
                         {
+                            QSignalBlocker blocker(array_monitor_gain_spinbox);
+                            array_monitor_gain_spinbox->setValue(values[4].as_double());
+                        }
+                        {
                             QSignalBlocker blocker(array_front_gain_spinbox);
-                            array_front_gain_spinbox->setValue(values[4].as_double());
+                            array_front_gain_spinbox->setValue(values[5].as_double());
                         }
                         {
                             QSignalBlocker blocker(array_rear_gain_spinbox);
-                            array_rear_gain_spinbox->setValue(values[5].as_double());
+                            array_rear_gain_spinbox->setValue(values[6].as_double());
                         }
                         {
                             QSignalBlocker blocker(array_solo_combobox);
-                            const auto text = QString::fromStdString(values[6].as_string());
+                            const auto text = QString::fromStdString(values[7].as_string());
                             const int index = array_solo_combobox->findData(text);
                             if (index >= 0) array_solo_combobox->setCurrentIndex(index);
                         }
                         {
                             QSignalBlocker blocker(array_monitor_combobox);
-                            const auto text = QString::fromStdString(values[7].as_string());
+                            const auto text = QString::fromStdString(values[8].as_string());
                             const int index = array_monitor_combobox->findData(text);
                             if (index >= 0) array_monitor_combobox->setCurrentIndex(index);
                         }
@@ -538,6 +543,13 @@ namespace task_generator_gui
                 }
                 refreshMotorPlayback();
             });
+        if (microphone_array_parameters_client
+            && microphone_array_parameters_client->service_is_ready())
+        {
+            microphone_array_parameters_client->set_parameters(
+                {rclcpp::Parameter("motor_enabled", enabled)},
+                [](auto) {});
+        }
     }
 
     void AuditoryPanel::syncMotorPlaybackCheckbox(
@@ -597,6 +609,13 @@ namespace task_generator_gui
                 }
                 refreshMotorPlayback();
             });
+        if (microphone_array_parameters_client
+            && microphone_array_parameters_client->service_is_ready())
+        {
+            microphone_array_parameters_client->set_parameters(
+                {rclcpp::Parameter(name, value)},
+                [](auto) {});
+        }
     }
 
     void AuditoryPanel::syncMotorTuningControls(
@@ -661,6 +680,13 @@ namespace task_generator_gui
                 }
                 refreshMotorPlayback();
             });
+        if (microphone_array_parameters_client
+            && microphone_array_parameters_client->service_is_ready())
+        {
+            microphone_array_parameters_client->set_parameters(
+                parameters,
+                [](auto) {});
+        }
     }
 
     void AuditoryPanel::refreshAudioListenerRouting()
@@ -1238,6 +1264,7 @@ namespace task_generator_gui
         array_layout->addRow(array_mute_checkbox);
 
         array_master_gain_spinbox = new QDoubleSpinBox();
+        array_monitor_gain_spinbox = new QDoubleSpinBox();
         array_front_gain_spinbox = new QDoubleSpinBox();
         array_rear_gain_spinbox = new QDoubleSpinBox();
         for (auto spinbox : {array_master_gain_spinbox, array_front_gain_spinbox, array_rear_gain_spinbox})
@@ -1246,13 +1273,19 @@ namespace task_generator_gui
             spinbox->setSingleStep(0.05);
             spinbox->setDecimals(2);
         }
+        array_monitor_gain_spinbox->setRange(0.0, 60.0);
+        array_monitor_gain_spinbox->setSingleStep(1.0);
+        array_monitor_gain_spinbox->setDecimals(1);
         connect(array_master_gain_spinbox, &QDoubleSpinBox::editingFinished, this,
             [this]() { setArrayParameters({rclcpp::Parameter("master_gain", array_master_gain_spinbox->value())}); });
+        connect(array_monitor_gain_spinbox, &QDoubleSpinBox::editingFinished, this,
+            [this]() { setArrayParameters({rclcpp::Parameter("monitor_gain_db", array_monitor_gain_spinbox->value())}); });
         connect(array_front_gain_spinbox, &QDoubleSpinBox::editingFinished, this,
             [this]() { setArrayParameters({rclcpp::Parameter("headphone_front_gain", array_front_gain_spinbox->value())}); });
         connect(array_rear_gain_spinbox, &QDoubleSpinBox::editingFinished, this,
             [this]() { setArrayParameters({rclcpp::Parameter("headphone_rear_gain", array_rear_gain_spinbox->value())}); });
         array_layout->addRow("Master gain", array_master_gain_spinbox);
+        array_layout->addRow("Monitor preamp (dB)", array_monitor_gain_spinbox);
         array_layout->addRow("Front contribution", array_front_gain_spinbox);
         array_layout->addRow("Rear contribution", array_rear_gain_spinbox);
 
@@ -1279,6 +1312,7 @@ namespace task_generator_gui
         {
             setArrayParameters({
                 rclcpp::Parameter("master_gain", 0.8),
+                rclcpp::Parameter("monitor_gain_db", 36.0),
                 rclcpp::Parameter("headphone_front_gain", 1.0),
                 rclcpp::Parameter("headphone_rear_gain", 0.75),
                 rclcpp::Parameter("solo_channel", std::string("")),

@@ -79,6 +79,8 @@ plugin tied to a physics simulator. `sound_propagation_node` remains the source
 of listener-specific distance, delay, attenuation, occupancy/material
 occlusion, reflection metadata and pyroomacoustics portal routing.
 `microphone_array_node` renders its four results on one 16 kHz sample clock.
+Finite sound events use reliable volatile QoS: current subscribers receive
+each event without replaying stale clips to nodes that join later.
 
 ### Geometry and spacing
 
@@ -159,6 +161,14 @@ one common scheduling anchor, then apply each receiver's delay with
 fractional-sample interpolation. WAV loops share `program_start_time` while
 retaining each receiver's independent delay and level. The renderer never
 duplicates one received channel four times.
+Procedural Jackal drivetrain state is synthesized once at the array's 16 kHz
+rate, then distributed with each microphone's independent propagation gain and
+streaming fractional delay. The RViz motor enable and tuning controls are
+mirrored to this renderer in four-mic mode.
+
+The legacy human and environment playback nodes are not launched in four-mic
+mode; the array is the sole workstation output path. `robot_sound_node` remains
+active as the motor-state producer, but its legacy mixer has no local device.
 
 `task_generator_msgs/AudioFrame` contains timestamp, sample rate, encoding,
 frame count, fixed ordering, microphone frame IDs, positions, inlet yaws and
@@ -183,9 +193,21 @@ research observation remains the unchanged four-channel `raw_array`.
 
 Headphone monitoring uses
 `L=(front_gain*FL + rear_gain*RL)/gain_sum` and the corresponding right-side
-expression, with no time alignment. One common output gain and a final clip
-guard are applied. `auditory.playback:=auto` routes the stereo result to the
-selected PortAudio device in addition to publishing it.
+expression, with no time alignment. Raw channels keep the -26 dBFS-at-94-dB-SPL
+MEMS calibration. A separate `monitor_gain_db` workstation preamp (36 dB by
+default) makes those physical levels audible without changing `raw_array`, and
+`monitor_limit` bounds headphone peaks. `auditory.playback:=auto` routes the
+stereo result to the selected PortAudio device in addition to publishing it.
+When `PULSE_SERVER` is present, automatic device selection prefers a stereo
+PulseAudio output over an exclusive raw ALSA device.
+
+The PCM renderer runs from a steady wall clock because PortAudio consumes in
+wall time even when the simulation real-time factor changes. Its small queue
+accepts arbitrary PortAudio callback frame sizes, counts underflow/overflow,
+retries a failed device every two seconds, and prints `four-mic audio
+diagnostics` every five seconds. These diagnostics report received/accepted
+events, active WAV and drivetrain voices, stream/device state, queue depth,
+callback count, peak and the last PortAudio error.
 
 ### Simulator relationship
 
@@ -220,8 +242,8 @@ available; it does not change the microphone topic or processing contract.
 
 RViz's **Jackal Four-Mic Hearing** group controls array enable, headphone
 enable, mute, master/front/rear gain, FL/FR/RL/RR solo, all-four monitoring,
-robot-hearing versus stereo playback, microphone markers, TDoA diagnostics and
-gain/routing reset. `solo_channel=""` is the empty-string sentinel for **no
+robot-hearing versus stereo playback, the monitor preamp, microphone markers,
+TDoA diagnostics and gain/routing reset. `solo_channel=""` is the empty-string sentinel for **no
 solo**, meaning all four channels remain selected. It does not denote a
 distance or missing geometry.
 
@@ -233,6 +255,7 @@ Equivalent parameter commands include:
 
 ```bash
 ros2 param set /arena/env_0/task_generator_node/microphone_array_node mute_all true
+ros2 param set /arena/env_0/task_generator_node/microphone_array_node monitor_gain_db 36.0
 ros2 param set /arena/env_0/task_generator_node/microphone_array_node solo_channel front_left
 ros2 param set /arena/env_0/task_generator_node/microphone_array_node tdoa_enabled true
 ```
@@ -255,7 +278,8 @@ python3 -m pytest task_generator/tests/unit/test_four_mic_array.py -q
 
 The tests cover geometry, rigid motion, channel independence, known
 left/right/front/rear arrival ordering, fractional delay, MEMS calibration,
-silence, stereo asymmetry, and disable/mute/solo/re-enable behavior. At 5 m
+silence, stereo asymmetry, monitor-only amplification, streaming fractional
+delay history, and disable/mute/solo/re-enable behavior. At 5 m
 from the array center, default geometry produces 786.604 us FR-minus-FL delay
 for a left source and 1,107.468 us RL-minus-FL delay for a front source.
 
@@ -264,8 +288,6 @@ Known limitations are:
 - Full pyroomacoustics RIR samples are not serialized by `HeardSoundEvent`, so
   raw PCM applies propagated direct/portal delay, calibrated level, occlusion
   and route loss but not the detailed late RIR convolution.
-- Procedural Jackal drivetrain synthesis is not converted to raw-array PCM;
-  WAV loops and finite pedestrian/robot events are.
 - The simple headphone map is not an HRTF, so front/back perception is weaker
   than the timing information retained in the raw channels.
 - NLOS quality depends on authored acoustic zones and connected openings. With
@@ -700,7 +722,8 @@ analysis. The current bundled assets contain precomputed values.
 
 Docker playback uses the host PulseAudio/PipeWire compatibility socket. The
 image installs `libasound2-plugins`, Compose forwards the socket as
-`/tmp/pulse/native`, and the launch selects the `pulse` device. This avoids
+`/tmp/pulse/native`, and four-mic automatic selection prefers the `pulse`
+device when `PULSE_SERVER` is set. This avoids
 opening raw `hw:0,0`, which is exclusive and unavailable while the host sound
 server owns the analog card. Rebuild/recreate the Arena container after a
 Docker audio configuration change.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import attrs
 import numpy as np

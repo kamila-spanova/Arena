@@ -1,15 +1,13 @@
 import launch
-from launch.substitutions import PathJoinSubstitution
 import launch_ros.parameter_descriptions
+from arena_bringup.substitutions import LaunchArgument, SelectAction
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-
-from arena_bringup.substitutions import LaunchArgument, SelectAction
-
 from task_generator.constants import Constants
 
 
-def generate_launch_description():
+def generate_launch_description() -> launch.LaunchDescription:
 
     ld = []
 
@@ -118,10 +116,11 @@ def generate_launch_description():
             "'", auditory.substitution, "' != 'none'",
         ])
     )
-    auditory_playback_on = launch.conditions.IfCondition(
+    legacy_playback_on = launch.conditions.IfCondition(
         launch.substitutions.PythonExpression([
             "'", auditory.substitution, "' != 'none' and '",
-            auditory_playback.substitution, "' != 'none'",
+            auditory_playback.substitution, "' != 'none' and '",
+            microphone_mode.substitution, "' != 'four_mic'",
         ])
     )
     auditory_viz_on = launch.conditions.IfCondition(
@@ -443,7 +442,7 @@ def generate_launch_description():
                 name='environment_sound_playback',
                 namespace=namespace.substitution,
                 output='screen',
-                condition=auditory_playback_on,
+                condition=legacy_playback_on,
                 parameters=[{
                     **playback_parameters,
                     "continuous_heard_sounds_topic":
@@ -484,7 +483,7 @@ def generate_launch_description():
                 name='human_sound_playback',
                 namespace=namespace.substitution,
                 output='screen',
-                condition=auditory_playback_on,
+                condition=legacy_playback_on,
                 parameters=[{
                     **playback_parameters,
                 }],
