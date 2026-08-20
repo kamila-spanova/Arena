@@ -1,0 +1,22 @@
+# Seeed reSpeaker XMOS XVF3800-inspired four-microphone raw MEMS array.
+# Jackal chassis dimensions in robots/jackal/urdf/jackal.urdf.xacro are
+# 0.420 m long x 0.310 m wide.  The 0.020 m inset gives the coordinates
+# (+/-0.190, +/-0.135, 0.220) m in base_link.
+/**:
+  ros__parameters:
+    sample_rate: 16000
+    block_size: 320
+    speed_of_sound: 343.0
+    mic_array_width: 0.310
+    mic_array_length: 0.420
+    mic_height: 0.220
+    mic_corner_inset: 0.020
+    # Orientations are embodied by the four URDF frames and published in the
+    # AudioFrame metadata: FL +45, FR -45, RL +135, RR -135 degrees.
+    sensitivity_dbfs_at_94_dbspl: -26.0
+    headphones_enabled: true
+    master_gain: 0.8
+    headphone_front_gain: 1.0
+    headphone_rear_gain: 0.75
+    tdoa_enabled: true
+    max_tdoa_seconds: 0.002

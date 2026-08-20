@@ -46,6 +46,7 @@ Old flat names (`tm_robots`, `mobile`, `env_n`, ...) still work with a warning, 
 | `auditory.static_devices` | YAML string | `[]` | World-independent environment audio systems (radios, alarms); non-empty adds `audio_systems` to `task.modules`. |
 | `auditory.motor` | `off` \| `wav` \| `procedural` | `procedural` | Robot motor audio source. |
 | `auditory.environment_playback` | bool string | `true` | Play propagated environment audio locally without disabling simulated emission. |
+| `microphone_mode` | `stereo` \| `four_mic` | `stereo` | Receiver layout; `four_mic` starts the synchronized Jackal raw PCM/hearing/headphone pipeline. |
 | `auditory.block_size` | int string | `2048` | PortAudio callback size; raise to `4096` on repeated underflows. |
 | `auditory.assets` / `auditory.sound_dir` | paths | bundled files | Asset catalog and WAV directory shared by all playback nodes. |
 | `use_sim_time` | bool string | `true` | Use sim clock instead of wall clock |

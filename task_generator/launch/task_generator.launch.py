@@ -211,6 +211,12 @@ def generate_launch_description():
         default_value="[]",
         description="YAML list of robot microphone mappings (owner, robot, placement, frame, index).",
     )
+    microphone_mode = LaunchArgument(
+        name="microphone_mode",
+        choices=["stereo", "four_mic"],
+        default_value="stereo",
+        description="Robot receiver layout; four_mic enables synchronized Jackal raw PCM.",
+    )
     auditory_viewport_height = LaunchArgument(
         name="auditory.viewport_height",
         default_value="1.6",
@@ -381,6 +387,7 @@ def generate_launch_description():
                 **auditory_environment_playback.dict,
                 **auditory_listener.dict,
                 **auditory_microphones.dict,
+                **microphone_mode.dict,
                 **auditory_viewport_height.dict,
             }.items(),
         )

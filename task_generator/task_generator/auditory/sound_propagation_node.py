@@ -94,10 +94,15 @@ class SoundPropagationNode(Node):
             "continuous_heard_sounds",
         )
         self.declare_parameter("robot_microphones", "[]")
+        self.declare_parameter("microphone_mode", "stereo")
         self.declare_parameter("robot_side_microphones", True)
         self.declare_parameter("robot_side_microphone_separation_m", 0.20)
         self.declare_parameter("robot_microphone_height_m", 0.35)
         self.declare_parameter("robot_microphone_forward_offset_m", 0.0)
+        self.declare_parameter("mic_array_width", 0.310)
+        self.declare_parameter("mic_array_length", 0.420)
+        self.declare_parameter("mic_height", 0.220)
+        self.declare_parameter("mic_corner_inset", 0.020)
         self.declare_parameter("viewport_down_projection_height_m", 1.6)
         self.declare_parameter("enable_propagation", True)
         self.declare_parameter("active_microphone_id", "")
@@ -886,7 +891,18 @@ class SoundPropagationNode(Node):
             for name in active_names
         }
         automatic_side_microphones: dict[str, tuple[Point, str]] = {}
-        if bool(self.get_parameter("robot_side_microphones").value):
+        microphone_mode = str(
+            self.get_parameter("microphone_mode").value
+        ).strip().lower()
+        if microphone_mode not in {"stereo", "four_mic", "center"}:
+            self.get_logger().warning(
+                f"unknown microphone_mode={microphone_mode!r}; using stereo"
+            )
+            microphone_mode = "stereo"
+        if (
+            microphone_mode == "stereo"
+            and bool(self.get_parameter("robot_side_microphones").value)
+        ):
             half_separation = 0.5 * side_microphone_separation
             for name in active_names:
                 frame_id = self._robot_base_frames[f"robot:{name}"]
@@ -906,6 +922,49 @@ class SoundPropagationNode(Node):
                     ),
                     frame_id,
                 )
+        elif microphone_mode == "four_mic":
+            array_width = float(self.get_parameter("mic_array_width").value)
+            array_length = float(self.get_parameter("mic_array_length").value)
+            array_height = float(self.get_parameter("mic_height").value)
+            corner_inset = float(self.get_parameter("mic_corner_inset").value)
+            valid = (
+                all(math.isfinite(value) for value in (
+                    array_width, array_length, array_height, corner_inset
+                ))
+                and array_width > 0.0
+                and array_length > 0.0
+                and array_height >= 0.0
+                and corner_inset >= 0.0
+                and 2.0 * corner_inset < min(array_width, array_length)
+            )
+            if not valid:
+                self.get_logger().warning(
+                    "invalid four-microphone geometry; using Jackal "
+                    "defaults width=0.310 length=0.420 height=0.220 inset=0.020"
+                )
+                array_width, array_length = 0.310, 0.420
+                array_height, corner_inset = 0.220, 0.020
+            half_x = 0.5 * array_length - corner_inset
+            half_y = 0.5 * array_width - corner_inset
+            offsets = {
+                "front_left": (half_x, half_y),
+                "front_right": (half_x, -half_y),
+                "rear_left": (-half_x, half_y),
+                "rear_right": (-half_x, -half_y),
+            }
+            for name in active_names:
+                frame_id = self._robot_base_frames[f"robot:{name}"]
+                for placement, (x_offset, y_offset) in offsets.items():
+                    automatic_side_microphones[
+                        f"{name}_mic_{placement}"
+                    ] = (
+                        Point(
+                            x=x_offset,
+                            y=y_offset,
+                            z=array_height,
+                        ),
+                        frame_id,
+                    )
         self._robot_side_microphone_ids = set(automatic_side_microphones)
         configured_microphones = {
             spec.listener_id: (
@@ -964,25 +1023,28 @@ class SoundPropagationNode(Node):
             marker.scale.x = marker.scale.y = marker.scale.z = 1.0
             marker.color = self._microphone_marker_color(listener_id)
             marker.lifetime.sec = 1
+            yaw = self._microphone_yaw(listener_id)
+            forward_x, forward_y = math.cos(yaw), math.sin(yaw)
+            left_x, left_y = -forward_y, forward_x
             apex = Point(
-                x=float(position.x) + 0.28,
-                y=float(position.y),
+                x=float(position.x) + 0.20 * forward_x,
+                y=float(position.y) + 0.20 * forward_y,
                 z=float(position.z),
             )
             base_a = Point(
-                x=float(position.x) - 0.14,
-                y=float(position.y) - 0.16,
-                z=float(position.z) - 0.12,
+                x=float(position.x) - 0.08 * forward_x - 0.08 * left_x,
+                y=float(position.y) - 0.08 * forward_y - 0.08 * left_y,
+                z=float(position.z) - 0.07,
             )
             base_b = Point(
-                x=float(position.x) - 0.14,
-                y=float(position.y) + 0.16,
-                z=float(position.z) - 0.12,
+                x=float(position.x) - 0.08 * forward_x + 0.08 * left_x,
+                y=float(position.y) - 0.08 * forward_y + 0.08 * left_y,
+                z=float(position.z) - 0.07,
             )
             base_c = Point(
-                x=float(position.x) - 0.14,
-                y=float(position.y),
-                z=float(position.z) + 0.18,
+                x=float(position.x) - 0.08 * forward_x,
+                y=float(position.y) - 0.08 * forward_y,
+                z=float(position.z) + 0.10,
             )
             marker.points = [
                 apex,
@@ -1025,11 +1087,31 @@ class SoundPropagationNode(Node):
 
     @staticmethod
     def _microphone_marker_color(listener_id: str) -> ColorRGBA:
+        if "_mic_front_left" in listener_id:
+            return ColorRGBA(r=0.05, g=0.75, b=1.0, a=0.95)
+        if "_mic_front_right" in listener_id:
+            return ColorRGBA(r=1.0, g=0.65, b=0.05, a=0.95)
+        if "_mic_rear_left" in listener_id:
+            return ColorRGBA(r=0.35, g=0.45, b=1.0, a=0.95)
+        if "_mic_rear_right" in listener_id:
+            return ColorRGBA(r=1.0, g=0.25, b=0.45, a=0.95)
         if listener_id.endswith("_left_mic"):
             return ColorRGBA(r=0.05, g=0.65, b=1.0, a=0.9)
         if listener_id.endswith("_right_mic"):
             return ColorRGBA(r=1.0, g=0.55, b=0.05, a=0.9)
         return ColorRGBA(r=0.12, g=0.95, b=0.45, a=0.85)
+
+    @staticmethod
+    def _microphone_yaw(listener_id: str) -> float:
+        for name, yaw in (
+            ("front_left", math.radians(45.0)),
+            ("front_right", math.radians(-45.0)),
+            ("rear_left", math.radians(135.0)),
+            ("rear_right", math.radians(-135.0)),
+        ):
+            if listener_id.endswith(f"_mic_{name}"):
+                return yaw
+        return 0.0
 
     def _microphone_marker_poses(
         self,

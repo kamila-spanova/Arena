@@ -79,6 +79,8 @@ public:
         bool playback_available);
     void setAudioSystemActive(const std::string &system_id, bool active);
     void removeSelectedAudioSystem();
+    void setArrayParameters(const std::vector<rclcpp::Parameter> &parameters);
+    void refreshArrayControls();
 
 protected:
     std::shared_ptr<rviz_common::ros_integration::RosNodeAbstractionIface> node_ptr;
@@ -89,11 +91,13 @@ protected:
     std::string human_playback_node;
     std::string environment_playback_node;
     std::string propagation_node;
+    std::string microphone_array_node;
 
     std::shared_ptr<rclcpp::AsyncParametersClient> motor_playback_parameters_client;
     std::shared_ptr<rclcpp::AsyncParametersClient> human_playback_parameters_client;
     std::shared_ptr<rclcpp::AsyncParametersClient> environment_playback_parameters_client;
     std::shared_ptr<rclcpp::AsyncParametersClient> propagation_parameters_client;
+    std::shared_ptr<rclcpp::AsyncParametersClient> microphone_array_parameters_client;
     rclcpp::Client<task_generator_msgs::srv::SetAudioSystem>::SharedPtr set_audio_system_client;
     rclcpp::Client<task_generator_msgs::srv::RemoveMicrophone>::SharedPtr remove_microphone_client;
     rclcpp::Client<task_generator_msgs::srv::RemoveAudioSystem>::SharedPtr remove_audio_system_client;
@@ -117,6 +121,17 @@ protected:
     QCheckBox *propagation_checkbox{nullptr};
     QCheckBox *environment_playback_checkbox{nullptr};
     QGroupBox *audio_systems_group{nullptr};
+    QGroupBox *microphone_array_group{nullptr};
+    QCheckBox *array_enabled_checkbox{nullptr};
+    QCheckBox *headphones_enabled_checkbox{nullptr};
+    QCheckBox *array_mute_checkbox{nullptr};
+    QCheckBox *array_visualization_checkbox{nullptr};
+    QCheckBox *array_tdoa_checkbox{nullptr};
+    QDoubleSpinBox *array_master_gain_spinbox{nullptr};
+    QDoubleSpinBox *array_front_gain_spinbox{nullptr};
+    QDoubleSpinBox *array_rear_gain_spinbox{nullptr};
+    QComboBox *array_solo_combobox{nullptr};
+    QComboBox *array_monitor_combobox{nullptr};
     QTreeWidget *audio_systems_tree{nullptr};
     QPushButton *remove_audio_system_button{nullptr};
     std::unordered_map<std::string, QDoubleSpinBox *> motor_tuning_spinboxes;

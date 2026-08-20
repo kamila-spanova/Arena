@@ -678,6 +678,55 @@ def test_propagation_reconciles_robot_odom_subscriptions(rclpy_context):
         propagation.destroy_node()
 
 
+def test_propagation_registers_four_mic_jackal_receivers(rclpy_context):
+    from rclpy.parameter import Parameter
+    from task_generator.auditory.sound_propagation_node import (
+        SoundPropagationNode,
+    )
+
+    suffix = f"t_{uuid.uuid4().hex[:8]}"
+    propagation = SoundPropagationNode(
+        namespace=f"/test/{suffix}",
+        parameter_overrides=[
+            Parameter(
+                "microphone_mode",
+                Parameter.Type.STRING,
+                "four_mic",
+            ),
+            Parameter(
+                "odom_topic_template",
+                Parameter.Type.STRING,
+                "{namespace}/odom",
+            ),
+        ],
+    )
+    fleet = _make_robot_fleet("robot1", f"/test/{suffix}/robot1")
+    expected = {
+        "robot1_mic_front_left": (0.19, 0.135, 0.22),
+        "robot1_mic_front_right": (0.19, -0.135, 0.22),
+        "robot1_mic_rear_left": (-0.19, 0.135, 0.22),
+        "robot1_mic_rear_right": (-0.19, -0.135, 0.22),
+    }
+
+    try:
+        propagation._cb_robot_fleet(fleet)
+        assert propagation._robot_side_microphone_ids == set(expected)
+        for listener_id, coordinates in expected.items():
+            position, frame = propagation._robot_microphones[listener_id]
+            assert (position.x, position.y, position.z) == pytest.approx(
+                coordinates
+            )
+            assert frame == "robot1/base_link"
+        assert propagation._microphone_yaw(
+            "robot1_mic_front_left"
+        ) == pytest.approx(math.pi / 4.0)
+        assert propagation._microphone_yaw(
+            "robot1_mic_rear_right"
+        ) == pytest.approx(-3.0 * math.pi / 4.0)
+    finally:
+        propagation.destroy_node()
+
+
 def test_auditory_round_trip_greeting_reaches_robot_marker(rclpy_context):
     import rclpy
     from rclpy.parameter import Parameter

@@ -25,6 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/SemanticSnapshot.msg
   msg/AcousticPath.msg
   msg/AudioSystemState.msg
+  msg/AudioFrame.msg
   msg/ContinuousAudioSourceState.msg
   msg/ContinuousHeardSoundState.msg
   msg/HeardSoundEvent.msg

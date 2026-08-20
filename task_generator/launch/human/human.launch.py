@@ -98,6 +98,11 @@ def generate_launch_description():
         name="auditory.microphones",
         default_value="[]",
     )
+    microphone_mode = LaunchArgument(
+        name="microphone_mode",
+        choices=["stereo", "four_mic"],
+        default_value="stereo",
+    )
     auditory_viewport_height = LaunchArgument(
         name="auditory.viewport_height",
         default_value="1.6",
@@ -125,6 +130,16 @@ def generate_launch_description():
             auditory_viz.substitution, "' == 'true'",
         ])
     )
+    four_mic_on = launch.conditions.IfCondition(
+        launch.substitutions.PythonExpression([
+            "'", auditory.substitution, "' != 'none' and '",
+            microphone_mode.substitution, "' == 'four_mic'",
+        ])
+    )
+    legacy_audio_device = launch.substitutions.PythonExpression([
+        "'none' if '", microphone_mode.substitution,
+        "' == 'four_mic' else '", auditory_playback.substitution, "'",
+    ])
     motor_enabled = launch.substitutions.PythonExpression([
         "'", auditory_motor.substitution, "' != 'off'",
     ])
@@ -168,7 +183,7 @@ def generate_launch_description():
         "output_sample_rate": 44100,
         "output_channels": 1,
         "block_size": auditory_block_size.param_value(int),
-        "audio_device": auditory_playback.substitution,
+        "audio_device": legacy_audio_device,
         "asset_catalog": auditory_assets.substitution,
         "sound_dir": auditory_sound_dir.substitution,
         "master_gain_db": 0.0,
@@ -251,7 +266,12 @@ def generate_launch_description():
                 namespace=namespace.substitution,
                 output='screen',
                 condition=auditory_on,
-                parameters=[{
+                parameters=[
+                    PathJoinSubstitution([
+                        FindPackageShare("task_generator"),
+                        "config", "auditory", "jackal_four_mic.yaml",
+                    ]),
+                    {
                     "use_sim_time": True,
                     "sound_events_topic": "human_sound_events",
                     "heard_sound_events_topic": "heard_sound_events",
@@ -261,6 +281,7 @@ def generate_launch_description():
                         "continuous_heard_sounds",
                     "robot_microphones":
                         auditory_microphones.param_value(str),
+                    "microphone_mode": microphone_mode.substitution,
                     "viewport_down_projection_height_m":
                         auditory_viewport_height.param_value(float),
                     "active_microphone_id":
@@ -316,7 +337,34 @@ def generate_launch_description():
                     "zone_coverage_tolerance_m": 0.25,
                     "buffer_events_until_scene_loaded": True,
                     "scene_event_buffer_size": 128,
-                }],
+                    },
+                ],
+            ),
+
+            Node(
+                package='task_generator',
+                executable='microphone_array_node',
+                name='microphone_array_node',
+                namespace=namespace.substitution,
+                output='screen',
+                condition=four_mic_on,
+                parameters=[
+                    PathJoinSubstitution([
+                        FindPackageShare("task_generator"),
+                        "config", "auditory", "jackal_four_mic.yaml",
+                    ]),
+                    {
+                        "use_sim_time": True,
+                        "asset_catalog": auditory_assets.substitution,
+                        "sound_dir": auditory_sound_dir.substitution,
+                        "heard_sound_events_topic": "heard_sound_events",
+                        "continuous_heard_sounds_topic": "continuous_heard_sounds",
+                        "robot_fleet_topic": "state/robots",
+                        "microphone_marker_topic": "microphone_markers",
+                        "visualization_enabled": auditory_viz.param_value(bool),
+                        "audio_device": auditory_playback.substitution,
+                    },
+                ],
             ),
 
             Node(
