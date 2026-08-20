@@ -679,6 +679,7 @@ def test_propagation_reconciles_robot_odom_subscriptions(rclpy_context):
 
 
 def test_propagation_registers_four_mic_jackal_receivers(rclpy_context):
+    from geometry_msgs.msg import Point
     from rclpy.parameter import Parameter
     from task_generator.auditory.sound_propagation_node import (
         SoundPropagationNode,
@@ -723,42 +724,109 @@ def test_propagation_registers_four_mic_jackal_receivers(rclpy_context):
         assert propagation._microphone_yaw(
             "robot1_mic_rear_right"
         ) == pytest.approx(-3.0 * math.pi / 4.0)
+        propagation._robots["robot:robot1"] = (Point(), "map")
+        listeners = propagation._listeners_for_event(_make_sound_event())
+        assert "robot:robot1" not in listeners
     finally:
         propagation.destroy_node()
 
 
-def test_four_mic_array_renders_audible_event_to_nonzero_pcm(rclpy_context):
+def test_four_mic_array_renders_and_fuses_robot_hearing_event(rclpy_context):
     import rclpy
+    from rclpy.parameter import Parameter
     from std_msgs.msg import Float32MultiArray
     from task_generator.auditory.microphone_array_node import MicrophoneArrayNode
+    from task_generator.auditory.qos_profiles import transient_event_qos
+    from task_generator.auditory.robot_hearing_node import RobotHearingNode
+    from task_generator_msgs.msg import HeardSoundEvent
 
     suffix = f"t_{uuid.uuid4().hex[:8]}"
     namespace = f"/test/{suffix}"
     array = MicrophoneArrayNode(namespace=namespace)
+    hearing = RobotHearingNode(
+        namespace=namespace,
+        parameter_overrides=[
+            Parameter(
+                "heard_sound_events_topic",
+                Parameter.Type.STRING,
+                f"{namespace}/four_mic_heard_sound_events",
+            ),
+            Parameter(
+                "honor_propagation_delay",
+                Parameter.Type.BOOL,
+                False,
+            ),
+        ],
+    )
     consumer = rclpy.create_node(f"four_mic_consumer_{suffix}")
     levels: list[Float32MultiArray] = []
+    fused_events: list[HeardSoundEvent] = []
+    robot_events: list[HeardSoundEvent] = []
     consumer.create_subscription(
         Float32MultiArray,
         f"{namespace}/jackal/audio/hearing/energy",
         levels.append,
         10,
     )
+    consumer.create_subscription(
+        HeardSoundEvent,
+        f"{namespace}/four_mic_heard_sound_events",
+        fused_events.append,
+        transient_event_qos(),
+    )
+    consumer.create_subscription(
+        HeardSoundEvent,
+        f"{namespace}/jackal/heard_sound",
+        robot_events.append,
+        transient_event_qos(),
+    )
 
     try:
-        array._on_fleet(_make_robot_fleet("jackal", f"{namespace}/jackal"))
-        for channel in ("front_left", "front_right", "rear_left", "rear_right"):
+        fleet = _make_robot_fleet("jackal", f"{namespace}/jackal")
+        array._on_fleet(fleet)
+        hearing._cb_robot_fleet(fleet)
+        _spin_until(
+            rclpy,
+            [array, hearing, consumer],
+            lambda: array._fused_heard_pub.get_subscription_count() >= 2
+            and hearing._heard_pubs["jackal"].get_subscription_count() >= 1,
+        )
+        channel_values = {
+            "front_left": ((0.19, 0.135, 0.22), 94.0, 0.0040),
+            "front_right": ((0.19, -0.135, 0.22), 90.0, 0.0050),
+            "rear_left": ((-0.19, 0.135, 0.22), 92.0, 0.0045),
+            "rear_right": ((-0.19, -0.135, 0.22), 89.0, 0.0060),
+        }
+        for channel, (position, received_db, delay_sec) in channel_values.items():
             event = _make_heard_sound_event()
             event.event_id = "human:1:four-mic-regression"
             event.listener_id = f"jackal_mic_{channel}"
-            event.received_volume_db = 94.0
+            event.listener_position.x = position[0]
+            event.listener_position.y = position[1]
+            event.listener_position.z = position[2]
+            event.received_volume_db = received_db
+            event.direct_delay_sec = delay_sec
             array._on_heard_event(event)
         _spin_until(
             rclpy,
-            [array, consumer],
-            lambda: any(message.data and max(message.data) > 1e-3 for message in levels),
+            [array, hearing, consumer],
+            lambda: fused_events
+            and robot_events
+            and any(message.data and max(message.data) > 1e-3 for message in levels),
         )
+        fused = fused_events[0]
+        assert fused.listener_id == "robot:jackal"
+        assert fused.received_volume_db == pytest.approx(94.0)
+        assert fused.direct_delay_sec == pytest.approx(0.0040)
+        assert fused.listener_position.x == pytest.approx(0.0)
+        assert fused.listener_position.y == pytest.approx(0.0)
+        assert fused.listener_position.z == pytest.approx(0.22)
+        assert fused.audible is True
+        assert robot_events[0].event_id == fused.event_id
+        assert robot_events[0].listener_id == "robot:jackal"
     finally:
         consumer.destroy_node()
+        hearing.destroy_node()
         array.destroy_node()
 
 

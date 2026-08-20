@@ -8,6 +8,7 @@ physical microphone position by SoundPropagationNode.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -75,6 +76,12 @@ class EventLoad:
 
 
 @dataclass(slots=True)
+class SemanticEventGroup:
+    messages: dict[int, HeardSoundEvent]
+    updated_at: float
+
+
+@dataclass(slots=True)
 class ContinuousVoice:
     samples: np.ndarray
     source_start: int
@@ -116,6 +123,11 @@ class MicrophoneArrayNode(Node):
         self.declare_parameter("asset_catalog", str(share / "config" / "auditory" / "acoustic_assets.yaml"))
         self.declare_parameter("sound_dir", str(share / "sounds"))
         self.declare_parameter("heard_sound_events_topic", "heard_sound_events")
+        self.declare_parameter(
+            "fused_heard_sound_events_topic",
+            "four_mic_heard_sound_events",
+        )
+        self.declare_parameter("semantic_group_timeout_sec", 1.0)
         self.declare_parameter("continuous_heard_sounds_topic", "continuous_heard_sounds")
         self.declare_parameter("robot_fleet_topic", "state/robots")
         self.declare_parameter("microphone_marker_topic", "microphone_markers")
@@ -171,6 +183,9 @@ class MicrophoneArrayNode(Node):
         self._cursor = 0
         self._clips: list[list[ScheduledClip]] = [[] for _ in CHANNEL_NAMES]
         self._event_loads: dict[str, EventLoad] = {}
+        self._semantic_event_groups: dict[str, SemanticEventGroup] = {}
+        self._fused_events = 0
+        self._incomplete_semantic_events = 0
         self._continuous: dict[tuple[str, int], ContinuousVoice] = {}
         self._procedural: dict[str, ProceduralArrayVoice] = {}
         self._procedural_pending: dict[str, ProceduralLoad] = {}
@@ -205,6 +220,11 @@ class MicrophoneArrayNode(Node):
             HeardSoundEvent,
             self.get_parameter("heard_sound_events_topic").value,
             self._on_heard_event,
+            transient_event_qos(),
+        )
+        self._fused_heard_pub = self.create_publisher(
+            HeardSoundEvent,
+            self.get_parameter("fused_heard_sound_events_topic").value,
             transient_event_qos(),
         )
         self.create_subscription(
@@ -299,7 +319,11 @@ class MicrophoneArrayNode(Node):
     def _on_heard_event(self, msg: HeardSoundEvent) -> None:
         self._heard_events += 1
         channel = self._listener_channel(str(msg.listener_id))
-        if channel is None or not msg.audible:
+        if channel is None:
+            return
+        event_id = self._event_key(msg)
+        self._collect_semantic_event(event_id, channel, msg)
+        if not msg.audible:
             return
         self._accepted_events += 1
         asset_id = str(msg.asset_id).strip() or str(msg.sound_type).strip()
@@ -312,9 +336,6 @@ class MicrophoneArrayNode(Node):
         if selected is None:
             self.get_logger().warning(f"no raw-array acoustic asset {asset_id!r}")
             return
-        event_id = str(msg.event_id).strip() or (
-            f"{msg.source_agent_id}:{asset_id}:{msg.header.stamp.sec}:{msg.header.stamp.nanosec}"
-        )
         load = self._event_loads.get(event_id)
         if load is None:
             _, spec = selected
@@ -328,6 +349,72 @@ class MicrophoneArrayNode(Node):
             self._event_loads[event_id] = load
         load.messages[channel] = msg
         load.updated_at = time.monotonic()
+
+    @staticmethod
+    def _event_key(msg: HeardSoundEvent) -> str:
+        return str(msg.event_id).strip() or (
+            f"{msg.source_agent_id}:{msg.asset_id or msg.sound_type}:"
+            f"{msg.header.stamp.sec}:{msg.header.stamp.nanosec}"
+        )
+
+    def _collect_semantic_event(
+        self,
+        event_id: str,
+        channel: int,
+        msg: HeardSoundEvent,
+    ) -> None:
+        group = self._semantic_event_groups.get(event_id)
+        if group is None:
+            group = SemanticEventGroup(messages={}, updated_at=time.monotonic())
+            self._semantic_event_groups[event_id] = group
+        group.messages[channel] = msg
+        group.updated_at = time.monotonic()
+        if len(group.messages) == len(CHANNEL_NAMES):
+            self._publish_fused_semantic_event(event_id, group)
+
+    def _publish_fused_semantic_event(
+        self,
+        event_id: str,
+        group: SemanticEventGroup,
+    ) -> None:
+        self._semantic_event_groups.pop(event_id, None)
+        if len(group.messages) != len(CHANNEL_NAMES) or not self._robot_name:
+            self._incomplete_semantic_events += 1
+            return
+
+        messages = tuple(group.messages[index] for index in range(len(CHANNEL_NAMES)))
+        audible = tuple(message for message in messages if message.audible)
+        candidates = audible or messages
+        best = max(candidates, key=lambda message: float(message.received_volume_db))
+        fused = copy.deepcopy(best)
+        fused.listener_id = f"robot:{self._robot_name}"
+        fused.listener_position.x = sum(
+            float(message.listener_position.x) for message in messages
+        ) / len(messages)
+        fused.listener_position.y = sum(
+            float(message.listener_position.y) for message in messages
+        ) / len(messages)
+        fused.listener_position.z = sum(
+            float(message.listener_position.z) for message in messages
+        ) / len(messages)
+        dx = float(fused.source_position.x - fused.listener_position.x)
+        dy = float(fused.source_position.y - fused.listener_position.y)
+        dz = float(fused.source_position.z - fused.listener_position.z)
+        fused.distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        fused.bearing_rad = math.atan2(dy, dx)
+        fused.received_volume_db = float(best.received_volume_db)
+        fused.hearing_threshold_db = float(best.hearing_threshold_db)
+        fused.direct_delay_sec = min(
+            float(message.direct_delay_sec) for message in candidates
+        )
+        fused.audible = bool(audible) and bool(
+            self.get_parameter("enabled").value
+        ) and not bool(self.get_parameter("mute_all").value)
+        fused.occluded = bool(audible) and all(
+            message.occluded for message in audible
+        )
+        self._fused_heard_pub.publish(fused)
+        self._fused_events += 1
 
     def _on_continuous(self, msg: ContinuousHeardSoundState) -> None:
         channel = self._listener_channel(str(msg.listener_id))
@@ -472,6 +559,19 @@ class MicrophoneArrayNode(Node):
 
     def _poll_loads(self) -> None:
         now = time.monotonic()
+        semantic_timeout = max(
+            float(self.get_parameter("semantic_group_timeout_sec").value),
+            0.1,
+        )
+        for event_id, group in tuple(self._semantic_event_groups.items()):
+            if now - group.updated_at <= semantic_timeout:
+                continue
+            self._semantic_event_groups.pop(event_id, None)
+            self._incomplete_semantic_events += 1
+            self.get_logger().warning(
+                f"discarding incomplete four-mic semantic event {event_id!r}: "
+                f"received {len(group.messages)}/{len(CHANNEL_NAMES)} channels"
+            )
         for event_id, load in tuple(self._event_loads.items()):
             if not load.future.done():
                 continue
@@ -816,6 +916,9 @@ class MicrophoneArrayNode(Node):
             elif parameter.name == "monitor_limit":
                 if parameter.type_ not in {Parameter.Type.DOUBLE, Parameter.Type.INTEGER} or not 0.0 < float(parameter.value) <= 1.0:
                     return SetParametersResult(successful=False, reason="monitor_limit must be in (0,1]")
+            elif parameter.name == "semantic_group_timeout_sec":
+                if parameter.type_ not in {Parameter.Type.DOUBLE, Parameter.Type.INTEGER} or not math.isfinite(float(parameter.value)) or float(parameter.value) <= 0.0:
+                    return SetParametersResult(successful=False, reason="semantic_group_timeout_sec must be finite and positive")
             elif parameter.name in tuning_names:
                 if parameter.type_ not in {Parameter.Type.DOUBLE, Parameter.Type.INTEGER} or not math.isfinite(float(parameter.value)):
                     return SetParametersResult(successful=False, reason=f"{parameter.name} must be finite")
@@ -963,6 +1066,9 @@ class MicrophoneArrayNode(Node):
             f"robot={self._robot_name or None}, "
             f"publishers_ready={self._publishers_ready}, "
             f"heard={self._heard_events}, accepted={self._accepted_events}, "
+            f"fused={self._fused_events}, "
+            f"semantic_pending={len(self._semantic_event_groups)}, "
+            f"semantic_incomplete={self._incomplete_semantic_events}, "
             f"finite_pending={len(self._event_loads)}, "
             f"wav_voices={len(self._continuous)}, "
             f"drivetrain_voices={len(self._procedural)}, "

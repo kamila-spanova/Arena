@@ -19,9 +19,10 @@ selected.
   multi-portal coupling across doors and shared open boundaries.
 - TF microphones: named microphones can attach to any TF frame. Every
   microphone is an independent propagation listener.
-- Robot hearing: `robot_hearing_node` listens for `HeardSoundEvent`, discovers
-  robots from `state/robots`, republishes per-robot heard events, and publishes
-  an RViz text marker when a robot hears a configured sound type.
+- Robot hearing: in stereo mode, `robot_hearing_node` consumes the center
+  listener. In four-mic mode, `microphone_array_node` first fuses the matching
+  FL/FR/RL/RR results and `robot_hearing_node` consumes only that array-derived
+  event. It republishes per-robot heard events and RViz text markers.
 - Human audio playback: `human_sound_playback` plays human sound assets from
   `config/auditory/acoustic_assets.yaml`.
 - Environment audio: scenarios can define a looping radio or one logical
@@ -50,6 +51,8 @@ Expected nodes when enabled include:
 
 - `human_sound_events`: emitted `SoundEvent` stream.
 - `heard_sound_events`: propagated `HeardSoundEvent` stream.
+- `four_mic_heard_sound_events`: one array-fused event per finite sound in
+  four-mic mode; this is the input to `robot_hearing_node` in that mode.
 - `continuous_audio_sources`: persistent procedural source state.
 - `continuous_heard_sounds`: listener-specific propagated procedural state.
 - `audio_system_states`: transient-local radio and alarm control state.
@@ -152,7 +155,8 @@ onboard AEC, AGC, beamforming, noise suppression or phase correction.
 
 ```text
 sources -> existing sound_propagation_node -> FL / FR / RL / RR results
-        -> synchronized raw PCM -> hearing / stereo / GCC-PHAT
+        -> synchronized raw PCM -> mono diagnostic / spatial stereo / GCC-PHAT
+        -> four-channel event fusion -> robot_hearing_node -> jackal/heard_sound
 ```
 
 Each listener result has its own `direct_delay_sec`, `received_volume_db`,
@@ -169,6 +173,12 @@ mirrored to this renderer in four-mic mode.
 The legacy human and environment playback nodes are not launched in four-mic
 mode; the array is the sole workstation output path. `robot_sound_node` remains
 active as the motor-state producer, but its legacy mixer has no local device.
+The independent `robot:jackal` center listener is not propagated in four-mic
+mode. Once all four microphone results for a finite event arrive, the array
+publishes one compatible event using the strongest audible received level, the
+earliest audible arrival, and the mean microphone position as the robot-array
+center. The existing robot-hearing threshold, delay and marker logic then
+publishes `jackal/heard_sound`.
 
 `task_generator_msgs/AudioFrame` contains timestamp, sample rate, encoding,
 frame count, fixed ordering, microphone frame IDs, positions, inlet yaws and
@@ -186,8 +196,9 @@ interleaved float32 PCM. For a robot named `jackal`, topics end in:
 - `jackal/audio/headphones/stereo`
 - `jackal/audio/diagnostics/tdoa`
 
-`hearing/mono` selects the highest-RMS raw channel per block instead of
-phase-averaging asynchronous signals. `hearing/energy` carries linear RMS in
+`hearing/mono` is a diagnostic signal that selects the highest-RMS raw channel
+per block instead of phase-averaging asynchronous signals. It is not the normal
+headphone presentation. `hearing/energy` carries linear RMS in
 the order FL, FR, RL, RR, hearing, headphone L, headphone R. The canonical
 research observation remains the unchanged four-channel `raw_array`.
 
@@ -242,10 +253,12 @@ available; it does not change the microphone topic or processing contract.
 
 RViz's **Jackal Four-Mic Hearing** group controls array enable, headphone
 enable, mute, master/front/rear gain, FL/FR/RL/RR solo, all-four monitoring,
-robot-hearing versus stereo playback, the monitor preamp, microphone markers,
-TDoA diagnostics and gain/routing reset. `solo_channel=""` is the empty-string sentinel for **no
-solo**, meaning all four channels remain selected. It does not denote a
-distance or missing geometry.
+the monitor preamp, microphone markers, TDoA diagnostics and gain/routing
+reset. **Spatial stereo (normal)** maps FL/RL to the left headphone and FR/RR
+to the right. **Mono detection preview** duplicates the highest-energy channel
+into both ears and exists only for diagnostics. `solo_channel=""` is the
+empty-string sentinel for **no solo**, meaning all four channels remain
+selected. Solo never changes the canonical four-channel raw or semantic input.
 
 Markers on `microphone_markers` show each position, name, inlet arrow, ON/OFF
 state and current dBFS. Solo changes only monitoring products; the raw array
@@ -301,12 +314,12 @@ portals are shown through `Arena/Debug/Sound Propagation`. Heard-sound text is
 not added as a separate RViz display.
 
 The Auditory RViz panel provides an `Auditory Runtime` group, an
-`Audio Playback Microphone` group, an `Environment Audio Sources` table, `Play robot motor
-audio on this workstation`, and a live `Motor Sound Tuning` group. The runtime
-group independently controls propagation and local radio/alarm playback. The
-listener group follows the transient microphone registry and updates human,
-robot, and environment playback. Its dropdown selects exactly one
-microphone, so workstation audio represents only what that microphone hears.
+`Environment Audio Sources` table, `Play robot motor audio on this
+workstation`, and a live `Motor Sound Tuning` group. The runtime group
+independently controls propagation and local radio/alarm playback. The legacy
+single-listener playback group is visible in stereo mode and hidden whenever
+the four-mic array is active; four-mic monitoring instead uses the array's
+spatial stereo and diagnostic solo controls.
 The controls follow changes made through ROS parameters and
 persist across episode resets. `auditory.motor:=off` sets the initial
 mute state. This is separate from `auditory.robot_sound`, which controls
@@ -588,7 +601,7 @@ ros2 topic echo \
 The registry must contain `<robot>_left_mic` and `<robot>_right_mic`. In RViz,
 enable `Arena/Sound Propagation/Microphones`; the blue and orange cones must
 move and rotate with the robot. Click **Left microphone** and **Right
-microphone** under **Audio Playback Microphone** to compare playback. Confirm
+microphone** under **Legacy Audio Playback Microphone** to compare playback. Confirm
 that the selection reached all playback nodes and propagation, replacing
 `jackal_left_mic` if the registry shows a different robot name:
 

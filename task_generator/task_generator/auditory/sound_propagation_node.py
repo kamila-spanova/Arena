@@ -1492,14 +1492,15 @@ class SoundPropagationNode(Node):
                 if position is not None:
                     listeners[listener_id] = position
 
-        for listener_id, (position, frame_id) in self._robots.items():
-            transformed = self._point_in_acoustic_frame(
-                position,
-                frame_id,
-                listener_id,
-            )
-            if transformed is not None:
-                listeners[listener_id] = transformed
+        if str(self.get_parameter("microphone_mode").value) != "four_mic":
+            for listener_id, (position, frame_id) in self._robots.items():
+                transformed = self._point_in_acoustic_frame(
+                    position,
+                    frame_id,
+                    listener_id,
+                )
+                if transformed is not None:
+                    listeners[listener_id] = transformed
 
         listeners.update(self._microphone_positions())
 

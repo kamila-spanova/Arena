@@ -146,6 +146,11 @@ def generate_launch_description() -> launch.LaunchDescription:
         "'procedural' if '", auditory_motor.substitution,
         "' == 'off' else '", auditory_motor.substitution, "'",
     ])
+    robot_hearing_events_topic = launch.substitutions.PythonExpression([
+        "'four_mic_heard_sound_events' if '",
+        microphone_mode.substitution,
+        "' == 'four_mic' else 'heard_sound_events'",
+    ])
 
     playback_parameters = {
         "sound_events_topic": "human_sound_events",
@@ -357,6 +362,8 @@ def generate_launch_description() -> launch.LaunchDescription:
                         "asset_catalog": auditory_assets.substitution,
                         "sound_dir": auditory_sound_dir.substitution,
                         "heard_sound_events_topic": "heard_sound_events",
+                        "fused_heard_sound_events_topic":
+                            "four_mic_heard_sound_events",
                         "continuous_heard_sounds_topic": "continuous_heard_sounds",
                         "robot_fleet_topic": "state/robots",
                         "microphone_marker_topic": "microphone_markers",
@@ -463,7 +470,7 @@ def generate_launch_description() -> launch.LaunchDescription:
                 parameters=[{
                     "use_sim_time": True,
                     "robot_fleet_topic": "state/robots",
-                    "heard_sound_events_topic": "heard_sound_events",
+                    "heard_sound_events_topic": robot_hearing_events_topic,
                     "heard_sound_topic_suffix": "heard_sound",
                     "marker_topic_suffix": "heard_sound_marker",
                     "ignore_self": True,

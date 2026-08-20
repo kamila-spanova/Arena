@@ -364,6 +364,8 @@ namespace task_generator_gui
         {
             if (microphone_array_group)
                 microphone_array_group->setEnabled(false);
+            if (audio_listener_group)
+                audio_listener_group->setVisible(true);
             return;
         }
         microphone_array_parameters_client->get_parameters(
@@ -383,6 +385,8 @@ namespace task_generator_gui
                         if (!microphone_array_group)
                             return;
                         microphone_array_group->setEnabled(true);
+                        if (audio_listener_group)
+                            audio_listener_group->setVisible(false);
                         const std::array<QCheckBox *, 5> boxes{
                             array_enabled_checkbox, headphones_enabled_checkbox,
                             array_mute_checkbox, array_visualization_checkbox,
@@ -1246,7 +1250,11 @@ namespace task_generator_gui
         auto array_layout = new QFormLayout();
         array_enabled_checkbox = new QCheckBox("Enable microphone array");
         headphones_enabled_checkbox = new QCheckBox("Enable headphone playback");
-        array_mute_checkbox = new QCheckBox("Mute all audio outputs");
+        headphones_enabled_checkbox->setToolTip(
+            "Enables the two-channel monitor derived from the four raw microphones.");
+        array_mute_checkbox = new QCheckBox("Mute all array outputs");
+        array_mute_checkbox->setToolTip(
+            "Silences FL, FR, RL, RR and every product derived from them.");
         array_visualization_checkbox = new QCheckBox("Show microphone visualization");
         array_tdoa_checkbox = new QCheckBox("Enable TDoA diagnostics");
         connect(array_enabled_checkbox, &QCheckBox::toggled, this,
@@ -1295,16 +1303,21 @@ namespace task_generator_gui
         array_solo_combobox->addItem("Solo FR", "front_right");
         array_solo_combobox->addItem("Solo RL", "rear_left");
         array_solo_combobox->addItem("Solo RR", "rear_right");
+        array_solo_combobox->setToolTip(
+            "Diagnostic monitor routing only; raw_array always retains FL, FR, RL and RR.");
         connect(array_solo_combobox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int index) { setArrayParameters({rclcpp::Parameter("solo_channel", array_solo_combobox->itemData(index).toString().toStdString())}); });
         array_layout->addRow("Channels", array_solo_combobox);
 
         array_monitor_combobox = new QComboBox();
-        array_monitor_combobox->addItem("Headphone stereo", "headphones");
-        array_monitor_combobox->addItem("Robot hearing", "hearing");
+        array_monitor_combobox->addItem("Spatial stereo (normal)", "headphones");
+        array_monitor_combobox->addItem("Mono detection preview", "hearing");
+        array_monitor_combobox->setToolTip(
+            "Spatial stereo maps FL/RL to the left ear and FR/RR to the right. "
+            "Mono preview duplicates the highest-energy microphone into both ears for diagnostics.");
         connect(array_monitor_combobox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int index) { setArrayParameters({rclcpp::Parameter("monitor_mode", array_monitor_combobox->itemData(index).toString().toStdString())}); });
-        array_layout->addRow("Playback", array_monitor_combobox);
+        array_layout->addRow("Headphone output", array_monitor_combobox);
         array_layout->addRow(array_visualization_checkbox);
         array_layout->addRow(array_tdoa_checkbox);
         auto reset_array_button = new QPushButton("Reset gains and routing");
@@ -1323,7 +1336,7 @@ namespace task_generator_gui
         microphone_array_group->setLayout(array_layout);
         root_layout->addWidget(microphone_array_group);
 
-        audio_listener_group = new QGroupBox("Audio Playback Microphone");
+        audio_listener_group = new QGroupBox("Legacy Audio Playback Microphone");
         audio_listener_group->setEnabled(false);
         auto audio_listener_layout = new QFormLayout();
         audio_listener_id_combobox = new QComboBox();

@@ -24,6 +24,9 @@
     headphone_rear_gain: 0.75
     audio_retry_period_sec: 2.0
     audio_diagnostics_period_sec: 5.0
+    # All four reliable HeardSoundEvent results must arrive before one
+    # array-derived semantic robot-hearing event is emitted.
+    semantic_group_timeout_sec: 1.0
     # Align the procedural model's established -9 dB monitor trim with the
     # raw MEMS level domain before the separate monitor preamp is applied.
     motor_mems_calibration_db: -40.0
