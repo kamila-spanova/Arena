@@ -260,19 +260,18 @@ robots:
 An empty scenario (robot start/goal only) is valid. Add static obstacles by
 listing `Obstacle` entries under `static:`, dynamic pedestrians under `dynamic:`.
 
-For HuNav pedestrians include `behavior_tree:` pointing at either a shared
-library file (`BTRegularNav.xml`) or a path-relative file
-(`./hunav_1_behavior_tree.xml`):
+For HumanSim (arena_humansim) pedestrians include an `agent:` block. The
+`agent_type` is either a built-in type (`adult`, `elder`) or a path-relative
+agent-type YAML file (`./doctor.yaml`) defining scripted behavior
+(sequences, interactions):
 
 ```yaml
 dynamic:
 - name: agent_1
   model: female_adult_medical_01
-  behavior_tree: BTRegularNav.xml
-  pose: [2.0, 5.0, 0.0]
-  velocity: 1.2
-  desired_velocity: 1.2
-  waypoint:
+  agent: {agent_type: adult, desired_velocity: 1.2}
+  pose: [2.0, 5.0, 0.0]   # yaw in radians
+  waypoints:
   - [2.0, 5.0, 0.0]
   - [8.0, 5.0, 0.0]
 ```

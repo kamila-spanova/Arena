@@ -103,9 +103,24 @@ seed produces identical placements.
 
 ## `obstacles/prompt/`
 
-`TM_Prompt` ([`prompt/arena.py`](prompt/arena.py), [`prompt/hunav.py`](prompt/hunav.py)) generates obstacle lists
-via an LLM. PROMPT registration is per-`BaseHumanSimulator` subclass, see
-[PROMPT registration](../../simulators/human/README.md#prompt-registration).
+`TM_Prompt` generates obstacle lists via an LLM. PROMPT registration is
+per-`BaseHumanSimulator` subclass, see
+[PROMPT registration](../../simulators/human/README.md#prompt-registration),
+so which implementation you get follows the `human` arg:
+
+| `human:=` | Implementation | `generation_mode` |
+|---|---|---|
+| `arena` | [`prompt/arena.py`](prompt/arena.py) | `arena`, `behavior` |
+| `hunav` | [`prompt/hunav.py`](prompt/hunav.py) | `behavior_tree`, `crowded_behavior_tree` |
+
+The hunav path needs the optional `arena_hunav_sim_bridge` (BT reference doc
+and Chroma DB) and `chromadb`. [`prompt_utils`](prompt/prompt_utils/__init__.py)
+serves those names through a module `__getattr__` so importing the package
+never requires them — only touching a hunav-only name does, and that raises an
+`AttributeError` naming the missing dep rather than an import traceback.
+Behaviour-tree prompt context lives in
+[`prompt_utils/context_bt.py`](prompt/prompt_utils/context_bt.py), separate from
+`context.py`, which carries the arena_humansim schema.
 
 ## Adding a new TM_Obstacles mode
 

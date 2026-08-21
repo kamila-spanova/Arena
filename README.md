@@ -29,9 +29,12 @@ arena feature isaac install # optional
 arena feature gazebo install # optional
 arena feature training install # optional
 arena feature vllm install # optional: local LLM backend
+arena feature docker gpu on # optional: NVIDIA GPU passthrough, needed for training
 ```
 
 We recommend installing at least one simulator.
+
+GPU passthrough takes effect on the next `source arena`, which recreates the container.
 
 #### vllm
 

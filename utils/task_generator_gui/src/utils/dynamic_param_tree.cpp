@@ -1,5 +1,7 @@
 #include "task_generator_gui/utils/dynamic_param_tree.hpp"
 
+#include "task_generator_gui/utils/sketch_edit.hpp"
+
 #include "Qt-MultiSelectComboBox/MultiSelectComboBox.h"
 
 #include <rcl_interfaces/msg/parameter_type.hpp>
@@ -12,8 +14,10 @@
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QTextEdit>
+#include <QPlainTextEdit>
 #include <QSignalBlocker>
 #include <QMetaObject>
+#include <QTimer>
 
 #include <algorithm>
 #include <limits>
@@ -92,6 +96,12 @@ DynamicParamTree::DynamicParamTree(
 // ---------------------------------------------------------------------------
 
 void DynamicParamTree::rebuild(const std::string& namespace_prefix)
+{
+    retries_ = 5;
+    retryRebuild(namespace_prefix);
+}
+
+void DynamicParamTree::retryRebuild(const std::string& namespace_prefix)
 {
     if (!params_client_ || !tree_)
         return;
@@ -248,6 +258,22 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
     widget_map_->clear();
     type_map_->clear();
 
+    // A node that does not know a listed name answers describe/get with an empty list.
+    if (state->descriptors.size() != state->param_names.size()
+        || state->values.size() != state->param_names.size())
+    {
+        auto *item = new QTreeWidgetItem(tree_);
+        item->setText(0, QString::fromStdString(state->namespace_prefix));
+        item->setText(1, retries_ > 0 ? "node did not describe these parameters, retrying"
+                                      : "node did not describe these parameters");
+        if (retries_ > 0)
+        {
+            --retries_;
+            QTimer::singleShot(2000, &lifetime_, [this, prefix = state->namespace_prefix]() { retryRebuild(prefix); });
+        }
+        return;
+    }
+
     const std::string prefix = state->namespace_prefix + ".";
 
     for (size_t i = 0; i < state->param_names.size(); ++i)
@@ -263,6 +289,8 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
 
         std::string label;
         std::string constraints;
+        bool is_sketch = false;
+        bool is_text   = false;
         {
             std::string rest = desc.additional_constraints;
             while (!rest.empty())
@@ -270,6 +298,16 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
                 size_t semi  = rest.find(';');
                 std::string token = (semi == std::string::npos) ? rest : rest.substr(0, semi);
                 rest = (semi == std::string::npos) ? std::string() : rest.substr(semi + 1);
+                if (token == "sketch")
+                {
+                    is_sketch = true;
+                    continue;
+                }
+                if (token == "text")
+                {
+                    is_text = true;
+                    continue;
+                }
                 size_t colon = token.find(':');
                 if (colon == std::string::npos) continue;
                 std::string kind  = token.substr(0, colon);
@@ -341,6 +379,23 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
             }
             cb->setCurrentText(QString::fromStdString(param.as_string()));
             w = cb;
+        }
+        else if (is_sketch && ptype == PT::PARAMETER_STRING)
+        {
+            auto *se = new SketchEdit();
+            se->setSketch(QString::fromStdString(param.as_string()));
+            se->setMinimumHeight(160);
+            w = se;
+        }
+        else if (is_text && ptype == PT::PARAMETER_STRING)
+        {
+            auto *te = new QTextEdit();
+            te->setPlainText(QString::fromStdString(param.as_string()));
+            te->setMinimumHeight(60);
+            te->setLineWrapMode(QTextEdit::NoWrap);
+            // Connected here so the generic chain below leaves other QTextEdits on commit-only.
+            QObject::connect(te, &QTextEdit::textChanged, tree_, [this, leaf]() { on_changed_(leaf); });
+            w = te;
         }
         else if (ptype == PT::PARAMETER_INTEGER && !desc.integer_range.empty())
         {
@@ -436,6 +491,14 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
                         on_changed_(leaf);
                     });
             }
+            else if (auto *te = qobject_cast<QTextEdit *>(w))
+            {
+                QObject::connect(te, &QTextEdit::textChanged, tree_,
+                    [this, leaf]()
+                    {
+                        on_changed_(leaf);
+                    });
+            }
             else if (auto *cb = qobject_cast<QCheckBox *>(w))
             {
                 QObject::connect(cb, &QCheckBox::toggled, tree_,
@@ -448,6 +511,14 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
             {
                 QObject::connect(combo, &QComboBox::currentTextChanged, tree_,
                     [this, leaf](const QString &)
+                    {
+                        on_changed_(leaf);
+                    });
+            }
+            else if (auto *se = qobject_cast<SketchEdit *>(w))
+            {
+                QObject::connect(se, &SketchEdit::sketchEdited, tree_,
+                    [this, leaf]()
                     {
                         on_changed_(leaf);
                     });
@@ -477,6 +548,9 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
             (*type_map_)[leaf]   = ptype;
         }
     }
+
+    if (on_ready_)
+        on_ready_();
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +594,17 @@ void DynamicParamTree::setWidgetValueFromParam(QWidget *w, const rcl_interfaces:
         {
             QSignalBlocker blk(te);
             te->setPlainText(QString::fromStdString(p.value.string_value));
+        }
+        else if (auto *se = qobject_cast<SketchEdit *>(w))
+        {
+            // Before the QPlainTextEdit branch: a SketchEdit is one, and setPlainText kills it.
+            QSignalBlocker blk(se);
+            se->setSketch(QString::fromStdString(p.value.string_value));
+        }
+        else if (auto *pte = qobject_cast<QPlainTextEdit *>(w))
+        {
+            QSignalBlocker blk(pte);
+            pte->setPlainText(QString::fromStdString(p.value.string_value));
         }
         else if (auto *le = qobject_cast<QLineEdit *>(w))
         {
@@ -606,6 +691,8 @@ std::vector<rcl_interfaces::msg::Parameter> DynamicParamTree::collectParams(
                 p.value.string_value = cb->currentText().toStdString();
             else if (auto *te = qobject_cast<QTextEdit *>(w))
                 p.value.string_value = te->toPlainText().toStdString();
+            else if (auto *pte = qobject_cast<QPlainTextEdit *>(w))
+                p.value.string_value = pte->toPlainText().toStdString();
             else if (auto *le = qobject_cast<QLineEdit *>(w))
                 p.value.string_value = le->text().toStdString();
             else

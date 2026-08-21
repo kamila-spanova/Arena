@@ -97,8 +97,11 @@ def _root_help() -> str:
     return "\n".join(out)
 
 
-def _verb_help(v: Verb) -> str:
-    out = [f"Usage: arena {v.name} [ARGS]..."]
+def _verb_help(v: Verb, prefix: str = "arena") -> str:
+    args = "[ARGS]..."
+    if isinstance(v.complete, Static) and isinstance(v.complete.values, dict):
+        args = f"[{'|'.join(v.complete.values)}]"
+    out = [f"Usage: {prefix} {v.name} {args}"]
     if v.help:
         out += ["", _indent(v.help)]
     return "\n".join(out)
@@ -516,7 +519,7 @@ def _feature_cmd(args: list[str]) -> int:
     if v is None:
         raise CLIError(f"No such command '{sub[0]}' for feature '{name}'.")
     if _wants_help(sub[1:], v.passthrough):
-        print(_verb_help(v))
+        print(_verb_help(v, f"arena feature {name}"))
         return 0
     return v.run(sub[1:]) or 0
 
@@ -527,8 +530,8 @@ def _feature_subs() -> dict[str, Sub]:
 
 FEATURE_SPEC = Sub(_feature_subs)
 
-_register(make_verb("feature", _feature_cmd, help_text=FEATURE_HELP, complete=FEATURE_SPEC))
-_register(make_verb("ft", _feature_cmd, hidden=True, help_text="Alias for feature.", complete=FEATURE_SPEC))
+_register(make_verb("feature", _feature_cmd, passthrough=True, help_text=FEATURE_HELP, complete=FEATURE_SPEC))
+_register(make_verb("ft", _feature_cmd, passthrough=True, hidden=True, help_text="Alias for feature.", complete=FEATURE_SPEC))
 
 
 @verb("shellinit", hidden=True)

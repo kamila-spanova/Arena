@@ -39,7 +39,7 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.lifecycle import TransitionCallbackReturn
 from rclpy.parameter import Parameter
-from std_msgs.msg import Int16, String
+from std_msgs.msg import Bool, Int16, String
 from task_generator_msgs.msg import AdapterDisplay, AdapterEntry, AdapterVizManifest
 
 from task_generator.constants import Constants
@@ -233,6 +233,13 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
             self.service_namespace("state", "world"),
             _LATCHED,
         )
+
+        self._pub_state_resetting = self.create_publisher(
+            Bool,
+            self.service_namespace("state", "resetting"),
+            _LATCHED,
+        )
+        self._pub_state_resetting.publish(Bool(data=False))
 
         self._pub_state_episode = self.create_publisher(
             task_generator_msgs.msg.EpisodeRecord,
@@ -428,8 +435,9 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
 
     async def teardown(self) -> None:
         self._heartbeat_timer.cancel()
-        if self._tick_loop_task is not None and not self._tick_loop_task.done():
-            self._tick_loop_task.cancel()
+        for t in (self._tick_loop_task, self._check_status_task, self._episode_task):
+            if t is not None and not t.done():
+                t.cancel()
         if self._task is not None:
             await self._task.teardown()
         if self._robots_manager is not None:
@@ -893,54 +901,59 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
                 topic_must_exist=False,
             ),
         ]
-        latched = StyleSpec(extra={"rviz": {"Reliability Policy": "Reliable", "Durability Policy": "Transient Local"}}).to_json()
-        env_displays.append(
-            AdapterDisplay(
-                name="Pedestrians",
-                topic=f"{env_ns}/humans",
-                topic_type="",
-                kind=DisplayKind.PEDESTRIANS,
-                style_json=StyleSpec().to_json(),
-                topic_must_exist=False,
-                group="Pedestrians",
-            )
-        )
-        # Backend-internal debug overlay, off by default.
-        env_displays.append(
-            AdapterDisplay(
-                name="Extra",
-                topic=f"{env_ns}/pedestrian_markers/extra",
-                topic_type="visualization_msgs/MarkerArray",
-                kind=DisplayKind.MARKER_ARRAY,
-                style_json=StyleSpec(enabled=False).to_json(),
-                topic_must_exist=False,
-                group="Pedestrians",
-            )
-        )
-        # Static environment geometry: not pedestrians, own group.
-        env_displays.append(
-            AdapterDisplay(
-                name="Static",
-                topic=f"{env_ns}/pedestrian_markers/static",
-                topic_type="visualization_msgs/MarkerArray",
-                kind=DisplayKind.MARKER_ARRAY,
-                style_json=latched,
-                topic_must_exist=False,
-                group="Static",
-            )
-        )
-        for leaf in ("static_walls", "static_objects"):
+        human_sim = self.conf.Arena.HUMAN.value
+        if human_sim not in (Constants.HumanSimulator.DUMMY, Constants.HumanSimulator.NONE):
+            latched = StyleSpec(extra={"rviz": {"Reliability Policy": "Reliable", "Durability Policy": "Transient Local"}}).to_json()
             env_displays.append(
                 AdapterDisplay(
-                    name=leaf.replace("_", " ").title(),
-                    topic=f"{env_ns}/pedestrian_markers/{leaf}",
+                    name="Pedestrians",
+                    topic=f"{env_ns}/humans",
+                    topic_type="",
+                    kind=DisplayKind.PEDESTRIANS,
+                    style_json=StyleSpec().to_json(),
+                    topic_must_exist=False,
+                    group="Pedestrians",
+                )
+            )
+            # Backend marker overlay. On by default: the canonical Skeletons3D
+            # display cannot render namespaced envs (upstream hri_rviz reads
+            # absolute /humans paths), so this is the working pedestrian view.
+            env_displays.append(
+                AdapterDisplay(
+                    name="Extra",
+                    topic=f"{env_ns}/pedestrian_markers/extra",
+                    topic_type="visualization_msgs/MarkerArray",
+                    kind=DisplayKind.MARKER_ARRAY,
+                    style_json=StyleSpec().to_json(),
+                    topic_must_exist=False,
+                    group="Pedestrians",
+                )
+            )
+            # Static environment geometry: not pedestrians, own group.
+            env_displays.append(
+                AdapterDisplay(
+                    name="Static",
+                    topic=f"{env_ns}/pedestrian_markers/static",
                     topic_type="visualization_msgs/MarkerArray",
                     kind=DisplayKind.MARKER_ARRAY,
                     style_json=latched,
-                    topic_must_exist=True,
+                    topic_must_exist=False,
                     group="Static",
                 )
             )
+            for leaf in ("static_walls", "static_objects"):
+                env_displays.append(
+                    AdapterDisplay(
+                        name=leaf.replace("_", " ").title(),
+                        topic=f"{env_ns}/pedestrian_markers/{leaf}",
+                        topic_type="visualization_msgs/MarkerArray",
+                        kind=DisplayKind.MARKER_ARRAY,
+                        style_json=latched,
+                        topic_must_exist=True,
+                        group="Static",
+                    )
+                )
+
         for name, topic in (
             (
                 "Microphones",
@@ -1156,6 +1169,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         async with self._reset_lock:
             self._start_time = self.sim_time
             self.get_logger().info("resetting")
+            self._pub_state_resetting.publish(Bool(data=True))
 
             record = self._episodes.current
             await self.hold("reset")
@@ -1165,6 +1179,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
                 await self._task.reset(world=record.world, seed=record.seed)
             finally:
                 await self.release("reset")
+                self._pub_state_resetting.publish(Bool(data=False))
             record.robots = [m.model_name for m in self._robots_manager.managers.values()]
 
             self._pub_task_reset.publish(Int16(data=record.episode_id - 1))

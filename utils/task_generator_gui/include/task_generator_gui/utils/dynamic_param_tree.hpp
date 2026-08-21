@@ -47,6 +47,7 @@ public:
     using CatalogFetcher = std::function<void(const std::string& catalog,
                             std::function<void(std::vector<std::string>)> cb)>;
     using ChangeCallback = std::function<void(const std::string& leaf)>;
+    using ReadyCallback  = std::function<void()>;
 
     DynamicParamTree(rclcpp::Node::SharedPtr node,
                      std::shared_ptr<rclcpp::AsyncParametersClient> params_client,
@@ -57,6 +58,10 @@ public:
                      CatalogFetcher catalog_fetcher = nullptr);
 
     void rebuild(const std::string& namespace_prefix);
+    // Same, minus the retry budget reset, so a retry cannot renew its own budget.
+    void retryRebuild(const std::string& namespace_prefix);
+    // Fires once the widgets match the requested namespace, never on a failed rebuild.
+    void whenRebuilt(ReadyCallback callback) { on_ready_ = std::move(callback); }
 
     static std::vector<rcl_interfaces::msg::Parameter> collectParams(
         const std::unordered_map<std::string, QWidget*>& widget_map,
@@ -73,9 +78,13 @@ private:
     std::unordered_map<std::string, QWidget*>*        widget_map_;
     std::unordered_map<std::string, uint8_t>*         type_map_;
     ChangeCallback                                    on_changed_;
+    ReadyCallback                                     on_ready_;
     CatalogFetcher                                    catalog_fetcher_;
 
     uint64_t rebuild_gen_{0};
+    int retries_{0};
+    // Timer context, so a pending retry dies with us. tree_ cannot serve: it outlives us.
+    QObject lifetime_;
 };
 
 } // namespace task_generator_gui

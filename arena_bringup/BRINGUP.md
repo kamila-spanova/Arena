@@ -81,7 +81,7 @@ arena launch \
 
 | Arg | Implication |
 |---|---|
-| `sim:=gazebo` | Starts gz-sim 8 (dart physics, ogre renderer). `human` defaults to `arena` |
+| `sim:=gazebo` | Starts gz-sim 8 (dart physics, ogre renderer). `human` defaults to `arena` (arena_humansim) |
 | `world:=map_empty` | Resolved to `arena_simulation_setup/worlds/map_empty/worlds/map_empty.world`; falls back to `configs/gazebo/empty.sdf` if absent |
 | `robot.mobile.local_planner:=teb` | TEB local planner; `mobile` adapter defaults to `nav2` for gazebo, the override lands as ROS param `robot.mobile.local_planner` and is forwarded to nav2's bringup |
 | `headless` | Omitted → `false` (sim GUI visible, rviz shown). Pass `headless:=true` to hide the sim GUI (viz also suppressed unless `viz:=true` is set explicitly) |
@@ -90,26 +90,27 @@ arena launch \
 | `lockstep.channels:="a;b"` | Semicolon-separated `name\|topic\|type\|period_s\|hard-or-soft` entries registered under caller `launch`, extra channels, producers self-register their own. `{env}` expands per env |
 | `lockstep.rtf:=N` | Target real-time factor for the lockstep scheduler, 0 or empty = unpaced |
 
-To suppress the human-simulation backend (`arena` by default for gazebo)
-when no human obstacles are needed, add `human:=none` to the command above.
+To suppress the arena_humansim node when no human obstacles are needed,
+add `human:=dummy` to the command above.
 
 ---
 
-### 3. Gazebo + jackal + HuNavSim
+### 3. Gazebo + jackal + HumanSim
 
 ```bash
 arena launch \
     sim:=gazebo \
     world:=map_empty \
     robot:=jackal \
-    human:=hunav \
-    task.robots:=explore \
-    task.obstacles:=random
+    human:=arena \
+    tm_robots:=explore \
+    tm_obstacles:=random
 ```
 
-`human:=hunav` starts `hunav_agent_manager` in the task-generator namespace.
-Human pedestrian models are managed by the HuNavSim plugin; the
-`task.obstacles` mode controls non-human obstacles separately.
+`human:=arena` starts the `arena_humansim` node (subsystem mode) in the
+task-generator namespace. Human pedestrian models are managed by the
+arena_humansim adapter; the `tm_obstacles` mode controls non-human obstacles
+separately.
 
 ---
 
@@ -348,7 +349,7 @@ Default is `gazebo`. Valid values:
 
 | Value | Meaning |
 |---|---|
-| `gazebo` (default) | gz-sim 8, dart physics, ogre renderer. `human` defaults to `arena`. |
+| `gazebo` (default) | gz-sim 8, dart physics, ogre renderer. `human` defaults to `arena` (arena_humansim). |
 | `isaac` | Isaac Sim via `arena feature isaac launch`. `mobile` defaults to `nav2`. |
 | `dummy` | No physics engine; a static `map->dummy` TF is published. For plumbing-only checks (no GPU, no controllers). Must be passed explicitly. |
 

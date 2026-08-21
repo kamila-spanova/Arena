@@ -115,7 +115,7 @@ def generate_launch_description():
     )
     # human/mobile defaults derive from arena's authoritative `sim` (the RegisterEnv
     # response, or the sim arg arena passes for managed envs). Empty here means
-    # "use arena_sim". User can still override by passing e.g. human:=hunav explicitly.
+    # "use arena_sim". User can still override by passing e.g. human:=dummy explicitly.
     human = LaunchArgument(
         name="human",
         default_value="",

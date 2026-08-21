@@ -42,6 +42,7 @@ All service paths are relative to the task_generator node namespace (default `/t
 | `state/episode` | `task_generator_msgs::msg::EpisodeRecord` | Current episode. Subscribers dedup by `episode_id` (same id may be republished as outcome resolves) and feed the panel's local `history_buffer_` (ring of 50, oldest-first) plus the current/bold row. |
 | `state/queue` | `task_generator_msgs::msg::EpisodeRecord` | Queued (next) episode. On arrival the panel populates widgets via `populateFromQueue` (signal-blocked) and clears dirty flags. Drives the "Next:" preview row when it differs from current. |
 | `state/paused` | `std_msgs::msg::Bool` | Drives the pause button label authoritatively. The pause button is fire-and-forget; UI reflects the published state, not the service-call return. |
+| `state/resetting` | `std_msgs::msg::Bool` | True while `_run_reset_cycle` holds the reset lock. The world generator panel disables "+Deploy" while it is set. |
 | `/parameter_events` | `rcl_interfaces::msg::ParameterEvent` | Filters on `node == task_generator_node`; if any changed/new/deleted parameter starts with `task.<active_mode>.`, rebuilds the matching family's param tree on the Qt thread. |
 
 ## AuditoryPanel

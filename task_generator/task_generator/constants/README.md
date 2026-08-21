@@ -13,7 +13,7 @@ maps them to live ROS parameters.
 | `TASK_GENERATOR_SERVER_NODE` | `Namespace` | `"task_generator_server"` |
 | `SimSimulator` | `Enum` | `dummy`, `flatland`, `gazebo`, `unity`, `isaac` |
 | `ArenaType` | `Enum` | `training`, `deployment` |
-| `HumanSimulator` | `Enum` | `dummy`, `none`, `hunav`, `arena` |
+| `HumanSimulator` | `Enum` | `dummy`, `none`, `isaac`, `hunav`, `arena` |
 | `TaskMode.TM_Obstacles` | `Enum` | `parametrized`, `random`, `scenario`, `environment`, `prompt` |
 | `TaskMode.TM_Robots` | `Enum` | `guided`, `explore`, `random`, `scenario`, `demo`, `stationary` |
 | `TaskMode.TM_Module` | `Enum` | `staged`, `dynamic_map`, `clear_forbidden_zones`, `rviz_ui` |
