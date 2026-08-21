@@ -65,7 +65,17 @@ __pycache__/
 
 # folders
 /_assets
-/.venv/
+.venv/
+
+# Local development and test artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
 
 
 # agents
