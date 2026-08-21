@@ -838,25 +838,29 @@ class ArenaHumanSimulator(BaseHumanSimulator):
 
         return obstacles
 
-    async def _sync_origin(self) -> None:
+    async def _sync_origin(self) -> bool:
         """Tell the engine the env reference so authored agent-type coordinates land in the realized frame."""
         cfg = self._realizer.get_config()
         origin = (float(cfg.x), float(cfg.y))
         if origin == self._sent_origin:
-            return
+            return True
         request = SetParameters.Request()
         request.parameters = [Parameter(name="origin", value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE_ARRAY, double_array_value=list(origin)))]
         response = await self._set_parameters_client.call_timeout(request)
-        if response is None or not all(r.successful for r in response.results):
-            raise RuntimeError(f"arena_humansim rejected origin {origin}")
-        self._sent_origin = origin
+        failures = ["no response"] if response is None else [result.reason for result in response.results if not result.successful]
+        if not failures or origin == (0.0, 0.0):
+            self._sent_origin = origin
+            return True
+        self._logger.error(f"arena_humansim did not take origin {origin} ({'; '.join(failures)}), skipping dynamic obstacles")
+        return False
 
     async def _spawn_dynamic_obstacles_impl(self, obstacles: Sequence[DynamicObstacle]) -> Sequence[DynamicObstacle | None]:
         """Forward dynamic obstacles to arena_humansim AgentManager via SpawnAgents."""
         if not obstacles:
             return obstacles
 
-        await self._sync_origin()
+        if not await self._sync_origin():
+            return [None] * len(obstacles)
         request = SpawnAgents.Request()
         for obstacle in obstacles:
             agent_msg = AgentStateMsg()

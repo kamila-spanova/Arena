@@ -254,6 +254,9 @@ class SoundPlaybackNode(Node):
                     device=None if device in ("", "auto") else device,
                     master_gain_db=master_gain_db,
                 )
+                self.get_logger().info(f"audio output: {self._mixer.device_name!r} (index {self._mixer.device})")
+                if self._mixer.skipped_outputs:
+                    self.get_logger().warning(f"skipped audio outputs: {list(self._mixer.skipped_outputs)}")
             except RuntimeError as exc:
                 self.get_logger().warning(f"{exc}; continuing without audio output")
                 self._mixer = AudioMixer(channels=channels, master_gain_db=master_gain_db)
@@ -925,7 +928,7 @@ class SoundPlaybackNode(Node):
             f"rooms={len(self._room_specs)}, "
             f"rir={self._use_rir}{rir_cache}{portal_cache}, "
             f"stream_active={self._mixer.active}, "
-            f"device={self._mixer.device}, "
+            f"device={self._mixer.device_name!r}, "
             f"voices={self._mixer.voice_count}, "
             f"callbacks={self._mixer.callback_count}, "
             f"output_peak={self._mixer.last_output_peak:.4f}, "

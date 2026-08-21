@@ -33,7 +33,7 @@ def generate_launch_description() -> launch.LaunchDescription:
     auditory_playback = LaunchArgument(
         name="auditory.playback",
         default_value="auto",
-        description="PortAudio output device for local playback; auto = system default, none = no playback nodes",
+        description="PortAudio output device for local playback; auto = pulse, pipewire, default, then the PortAudio default, none = no playback nodes",
     )
     auditory_block_size = LaunchArgument(
         name="auditory.block_size",
