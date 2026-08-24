@@ -21,6 +21,25 @@ def _walk_data_files(*roots):
                 yield (os.path.join('share', package_name, base), kept)
 
 
+def _walk_data_files_into(root, destination):
+    """Install a source tree below a different package-share directory.
+
+    The acoustics source tree deliberately lives outside ``worlds``.  Mapping it
+    into the installed ``worlds`` directory makes it visible to WorldIdentifier
+    without introducing a second mutable source tree in the checkout.
+    """
+    for base, _dirs, files in os.walk(root):
+        kept = [
+            os.path.join(base, f)
+            for f in files
+            if os.path.isfile(os.path.join(base, f))
+        ]
+        if kept:
+            relative = os.path.relpath(base, root)
+            target = destination if relative == '.' else os.path.join(destination, relative)
+            yield (os.path.join('share', package_name, target), kept)
+
+
 setup(
     name=package_name,
     version='1.0.0',
@@ -32,11 +51,22 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         *_walk_data_files('configs', 'launch', 'worlds', 'assets'),
+        (
+            os.path.join('share', package_name, 'acoustics'),
+            [
+                'acoustics/README.md',
+                'acoustics/dataset_spec.yaml',
+                'acoustics/generate_benchmark_worlds.py',
+                'acoustics/generate_scenarios.py',
+            ],
+        ),
+        *_walk_data_files_into('acoustics/worlds', 'worlds'),
     ],
     install_requires=[
         'setuptools',
         'requests',
         'attrs',
+        'PyYAML',
         'shapely',
         'pillow',
     ],
@@ -58,6 +88,7 @@ setup(
         'console_scripts': [
             f'generate_world = {package_name}.utils.generative.world_generator:main',
             f'world_generator = {package_name}.utils.generative.world_generator_ros:main',
+            f'generate_acoustics_scenarios = {package_name}.acoustics.cli:main',
         ],
     },
 )
