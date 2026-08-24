@@ -66,6 +66,7 @@ from arena_people_msgs.msg import Pedestrian, Pedestrians
 from arena_rclpy_mixins.Async import ClientWrapper
 from arena_rclpy_mixins.shared import Namespace
 from arena_runtime.sim import BaseSim
+from arena_runtime_msgs.msg import LockstepChannel
 from geometry_msgs.msg import (
     Point,
     Point32,
@@ -77,6 +78,8 @@ from geometry_msgs.msg import Pose as PoseMsg
 from geometry_msgs.msg import (
     Pose2D as Pose2DMsg,
 )
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.qos import (
     QoSDurabilityPolicy,
     QoSHistoryPolicy,
@@ -198,6 +201,11 @@ class ArenaHumanSimulator(BaseHumanSimulator):
             Feedback,
             self.node.service_namespace(self.SERVICE_FEEDBACK),
         )
+        self._set_parameters_client: ClientWrapper = self.node.create_client_wrapper(
+            SetParameters,
+            self.node.service_namespace("arena_humansim", "set_parameters"),
+        )
+        self._sent_origin: tuple[float, float] | None = None
 
         self._next_id: int = 1
 
@@ -280,11 +288,23 @@ class ArenaHumanSimulator(BaseHumanSimulator):
 
     def _agent_states_callback(self, msg: AgentStatesMsg):
         """Cache prev/curr snapshots from arena_humansim for local interpolation."""
-        # the engine stamps with its own tick timeline that starts at zero, re-stamp
-        # on arrival so dead-reckoning receivers compute ages in the /clock epoch
-        msg.header.stamp = self.node.sim_time.to_msg()
         self._prev_agent_states = self._curr_agent_states
         self._curr_agent_states = msg
+        # publish on receipt too: the rate loop emits once per stepped clock burst and
+        # can race this batch, leaving lockstep consumers gating on a pre-burst stamp
+        loop = self.node.event_loop
+        loop.call_soon_threadsafe(lambda: loop.create_task(self._publish_interpolated()))
+
+    async def _publish_interpolated(self) -> None:
+        """Interpolate at the current sim time and publish the roster."""
+        now = self.node.sim_time
+        states = self._interpolate_agent_states(now.sec * int(1e9) + now.nanosec)
+        if states is None:
+            return
+        peds = self._agent_states_to_pedestrians(states)
+        async with self._agents_lock:
+            self._arena_pedestrians = peds
+        self.publish_arena_peds(peds)
 
     def _interpolate_agent_states(self, now_ns: int) -> AgentStatesMsg | None:
         """Lerp between prev and curr agent states at the given timestamp."""
@@ -338,6 +358,25 @@ class ArenaHumanSimulator(BaseHumanSimulator):
             msg.agents.append(a)
         return msg
 
+    _ENGINE_DT_DEFAULT = 0.05
+
+    async def _engine_dt(self) -> float:
+        """Read the engine's tick length from its dt param."""
+        client = self.node.create_client_wrapper(
+            GetParameters,
+            self.node.service_namespace("arena_humansim", "get_parameters"),
+        )
+        try:
+            response = await client.call_timeout(GetParameters.Request(names=["dt"]))
+        except Exception as e:
+            self._logger.warning(f"engine dt read failed ({e}), assuming {self._ENGINE_DT_DEFAULT}")
+            return self._ENGINE_DT_DEFAULT
+        values = response.values if response is not None else []
+        if values and values[0].type == ParameterType.PARAMETER_DOUBLE and values[0].double_value > 0.0:
+            return values[0].double_value
+        self._logger.warning(f"engine dt param unavailable, assuming {self._ENGINE_DT_DEFAULT}")
+        return self._ENGINE_DT_DEFAULT
+
     async def setup(self):
         await asyncio.gather(
             *(
@@ -361,10 +400,33 @@ class ArenaHumanSimulator(BaseHumanSimulator):
                     self._reset_client,
                     self._get_profile_client,
                     self._feedback_client,
+                    self._set_parameters_client,
                 )
             )
         )
         self._logger.info("All arena_humansim services available")
+
+        # gate period = engine dt: one sample per window paces the sim to the
+        # engine's true coverage, so the clock cannot outrun the ped simulation
+        engine_dt = await self._engine_dt()
+        await self._register_lockstep_channels(
+            [
+                LockstepChannel(
+                    name="engine",
+                    topic=str(self.node.service_namespace("agent_states")),
+                    type="arena_humansim_msgs/msg/AgentStates",
+                    period_s=engine_dt,
+                    hard=True,
+                ),
+                LockstepChannel(
+                    name="peds",
+                    topic=str(self._namespace("arena_peds")),
+                    type="arena_people_msgs/msg/Pedestrians",
+                    period_s=engine_dt,
+                    hard=False,
+                ),
+            ]
+        )
 
         await self.unpause()
 
@@ -401,15 +463,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
             with self.node.sim_time_rate(self.TICK_RATE) as (done, rate):
                 while not done.is_set():
                     await rate.get()
-                    now = self.node.sim_time
-                    render_ns = now.sec * int(1e9) + now.nanosec
-                    states = self._interpolate_agent_states(render_ns)
-                    if states is None:
-                        continue
-                    peds = self._agent_states_to_pedestrians(states)
-                    async with self._agents_lock:
-                        self._arena_pedestrians = peds
-                    self.publish_arena_peds(peds)
+                    await self._publish_interpolated()
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -784,11 +838,29 @@ class ArenaHumanSimulator(BaseHumanSimulator):
 
         return obstacles
 
+    async def _sync_origin(self) -> bool:
+        """Tell the engine the env reference so authored agent-type coordinates land in the realized frame."""
+        cfg = self._realizer.get_config()
+        origin = (float(cfg.x), float(cfg.y))
+        if origin == self._sent_origin:
+            return True
+        request = SetParameters.Request()
+        request.parameters = [Parameter(name="origin", value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE_ARRAY, double_array_value=list(origin)))]
+        response = await self._set_parameters_client.call_timeout(request)
+        failures = ["no response"] if response is None else [result.reason for result in response.results if not result.successful]
+        if not failures or origin == (0.0, 0.0):
+            self._sent_origin = origin
+            return True
+        self._logger.error(f"arena_humansim did not take origin {origin} ({'; '.join(failures)}), skipping dynamic obstacles")
+        return False
+
     async def _spawn_dynamic_obstacles_impl(self, obstacles: Sequence[DynamicObstacle]) -> Sequence[DynamicObstacle | None]:
         """Forward dynamic obstacles to arena_humansim AgentManager via SpawnAgents."""
         if not obstacles:
             return obstacles
 
+        if not await self._sync_origin():
+            return [None] * len(obstacles)
         request = SpawnAgents.Request()
         for obstacle in obstacles:
             agent_msg = AgentStateMsg()

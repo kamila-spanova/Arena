@@ -138,12 +138,3 @@ def Configuration(server: ROSParamServer) -> type:
 #         gen = new_gen
 
 #     return lambda x: x if x is not None else gen()
-
-
-# class Hunavsim:
-#     VMAX = lp("VMAX", 0.3)
-#     WAYPOINT_MODE = lp("WAYPOINT_MODE", 0)
-#     FORCE_FACTOR_DESIRED = lp("FORCE_FACTOR_DESIRED", 1.0)
-#     FORCE_FACTOR_OBSTACLE = lp("FORCE_FACTOR_OBSTACLE", 1.0)
-#     FORCE_FACTOR_SOCIAL = lp("FORCE_FACTOR_SOCIAL", 5.0)
-#     FORCE_FACTOR_ROBOT = lp("FORCE_FACTOR_ROBOT", 0.0)

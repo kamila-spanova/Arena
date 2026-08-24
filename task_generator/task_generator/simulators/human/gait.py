@@ -27,17 +27,29 @@ _RUNNING = 2
 
 # Advisory generator-side joint limits: (lo, hi) in radians, ordered to match JOINT_NAMES.
 LIMITS: tuple[tuple[float, float], ...] = (
+    (-0.6, 0.6),  # r_waist
+    (-0.8, 0.8),  # y_waist
     (-0.2, 1.0),  # waist
+    (-0.3, 0.3),  # r_spine
+    (-0.4, 0.4),  # y_spine
+    (-0.1, 0.5),  # spine
+    (-0.3, 0.3),  # r_chest
+    (-0.4, 0.4),  # y_chest
+    (-0.1, 0.5),  # chest
     (-1.0, 1.0),  # r_head
     (-1.4, 1.4),  # y_head
     (-1.5, 1.5),  # p_head
-    (-1.1, 1.9),  # l_y_shoulder
-    (-0.4, 3.3),  # l_p_shoulder
-    (-1.7, 1.5),  # l_r_shoulder
+    (-0.5, 0.5),  # l_y_collar
+    (-0.2, 0.6),  # l_p_collar
+    (-3.1, 3.1),  # l_y_shoulder
+    (-1.0, 3.3),  # l_p_shoulder
+    (-1.6, 1.6),  # l_r_shoulder
     (0.0, 2.5),  # l_elbow
-    (-1.1, 1.9),  # r_y_shoulder
-    (-0.4, 3.3),  # r_p_shoulder
-    (-1.7, 1.5),  # r_r_shoulder
+    (-0.5, 0.5),  # r_y_collar
+    (-0.2, 0.6),  # r_p_collar
+    (-3.1, 3.1),  # r_y_shoulder
+    (-1.0, 3.3),  # r_p_shoulder
+    (-1.6, 1.6),  # r_r_shoulder
     (0.0, 2.5),  # r_elbow
     (-0.1, 0.6),  # l_y_hip
     (-0.4, 3.3),  # l_p_hip
@@ -47,6 +59,10 @@ LIMITS: tuple[tuple[float, float], ...] = (
     (-0.4, 3.3),  # r_p_hip
     (-0.4, 0.7),  # r_r_hip
     (-2.5, 0.0),  # r_knee
+    (-0.6, 0.6),  # l_y_ankle
+    (-0.9, 0.6),  # l_ankle
+    (-0.6, 0.6),  # r_y_ankle
+    (-0.9, 0.6),  # r_ankle
 )
 
 # Walk-cycle joint profiles baked from the polished CMU 12_01 clip (the
@@ -96,14 +112,26 @@ class GaitGenerator:
     """Deterministic per-agent gait synthesis emitting semantic joint angles per the JOINTS.md wire contract."""
 
     JOINT_NAMES: tuple[str, ...] = (
+        "r_waist",
+        "y_waist",
         "waist",
+        "r_spine",
+        "y_spine",
+        "spine",
+        "r_chest",
+        "y_chest",
+        "chest",
         "r_head",
         "y_head",
         "p_head",
+        "l_y_collar",
+        "l_p_collar",
         "l_y_shoulder",
         "l_p_shoulder",
         "l_r_shoulder",
         "l_elbow",
+        "r_y_collar",
+        "r_p_collar",
         "r_y_shoulder",
         "r_p_shoulder",
         "r_r_shoulder",
@@ -116,6 +144,10 @@ class GaitGenerator:
         "r_p_hip",
         "r_r_hip",
         "r_knee",
+        "l_y_ankle",
+        "l_ankle",
+        "r_y_ankle",
+        "r_ankle",
     )
 
     def __init__(self) -> None:
@@ -144,7 +176,7 @@ class GaitGenerator:
         speed: float,
         dt: float,
     ) -> dict[str, float]:
-        """Return base-joint-name -> angle for all 20 joints, clamped to limits.
+        """Return base-joint-name -> angle for all 36 joints, clamped to limits.
 
         Phase advances by dt each call and is keyed per agent_id.
         animation_state: int matching Pedestrian.msg constants (IDLE=0, WALKING=1, RUNNING=2).
@@ -195,14 +227,26 @@ class GaitGenerator:
         p_head = 0.02 * math.sin(0.5 * phi + 1.0)
 
         return {
+            "r_waist": 0.0,
+            "y_waist": 0.0,
             "waist": waist,
+            "r_spine": 0.0,
+            "y_spine": 0.0,
+            "spine": 0.0,
+            "r_chest": 0.0,
+            "y_chest": 0.0,
+            "chest": 0.0,
             "r_head": 0.0,
             "y_head": y_head,
             "p_head": p_head,
+            "l_y_collar": 0.0,
+            "l_p_collar": 0.0,
             "l_y_shoulder": 0.0,
             "l_p_shoulder": 0.0,
             "l_r_shoulder": 0.0,
             "l_elbow": 0.0,
+            "r_y_collar": 0.0,
+            "r_p_collar": 0.0,
             "r_y_shoulder": 0.0,
             "r_p_shoulder": 0.0,
             "r_r_shoulder": 0.0,
@@ -215,6 +259,10 @@ class GaitGenerator:
             "r_p_hip": 0.0,
             "r_r_hip": 0.0,
             "r_knee": 0.0,
+            "l_y_ankle": 0.0,
+            "l_ankle": 0.0,
+            "r_y_ankle": 0.0,
+            "r_ankle": 0.0,
         }
 
     def joint_state(

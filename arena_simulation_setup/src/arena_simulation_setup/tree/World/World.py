@@ -5,7 +5,7 @@ import os
 import tarfile
 import time
 import typing
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from pathlib import Path
 
@@ -22,9 +22,13 @@ from arena_simulation_setup.shared import (
     Elevator,
     Floor,
     Obstacle,
+    Schedule,
+    SemanticCfg,
+    Signal,
     Wall,
 )
-from arena_simulation_setup.tree import FallbackResolver, Identifier, PathView
+from arena_simulation_setup.shared.semantics import parse_semantics
+from arena_simulation_setup.tree import FallbackResolver, Identifier, PathView, SimplePathResolver
 from arena_simulation_setup.tree.assets.Material import (
     Material,
     MaterialIdentifier,
@@ -34,6 +38,28 @@ from arena_simulation_setup.utils.geometry import PointResolver, Position
 
 from .Map import Map
 from .Scenario import RegionAssignment, ScenarioView
+
+MICROPHONE_PLACEMENT_TOLERANCE_M = 0.05
+
+
+@attrs.define
+class WorldMicrophone:
+    zone: str = attrs.field(converter=lambda value: str(value).strip())
+    placement: str = attrs.field(
+        converter=lambda value: str(value).strip().lower()
+    )
+    position: Position = attrs.field(converter=Position.converter)
+    frame: str = attrs.field(
+        converter=lambda value: str(value).strip().strip('/'),
+        default='map',
+    )
+    index: int = attrs.field(converter=int, default=1)
+
+    @property
+    def listener_id(self) -> str:
+        return (
+            f'microphone:zone:{self.zone}:{self.placement}:{self.index}'
+        )
 
 
 @attrs.define
@@ -67,6 +93,8 @@ class LevelDescription:
         walls: list[Wall] = attrs.field(factory=list)
         doors: list[Door] = attrs.field(factory=list)
         elevators: list[Elevator] = attrs.field(factory=list)
+        schedules: list[Schedule] = attrs.field(factory=list)
+        signals: list[Signal] = attrs.field(factory=list)
         entities: WorldEntities = attrs.field(factory=WorldEntities)
         ceiling: bool = attrs.field(default=True)
         ceiling_height: float | None = attrs.field(default=None)
@@ -75,6 +103,11 @@ class LevelDescription:
             converter=MaterialIdentifier.converter,
             default=Material.default('ceiling'),
         )
+        wall_material: MaterialIdentifier = attrs.field(
+            converter=MaterialIdentifier.converter,
+            default=Material.default('wall'),
+        )
+        semantics: list[SemanticCfg] = attrs.field(factory=list, converter=parse_semantics)
 
         @property
         def floor(self) -> Floor:
@@ -88,10 +121,11 @@ class LevelDescription:
             return Floor(name=self.name, pos=pos, x_length=x_length, y_length=y_length, material=self.material)
 
     zones: list[Zone] = attrs.field(factory=list)
+    microphones: list[WorldMicrophone] = attrs.field(factory=list)
 
     @property
     def all_walls(self) -> typing.Iterable[Wall]:
-        return (wall for zone in self.zones for wall in zone.walls)
+        return (wall for zone in self.zones for wall in zone.walls if wall.material is None or wall.material.name)
 
     @property
     def all_doors(self) -> typing.Iterable[Door]:
@@ -102,13 +136,23 @@ class LevelDescription:
         return (elevator for zone in self.zones for elevator in zone.elevators)
 
     @property
+    def all_schedules(self) -> typing.Iterable[Schedule]:
+        return (schedule for zone in self.zones for schedule in zone.schedules)
+
+    @property
+    def all_signals(self) -> typing.Iterable[Signal]:
+        return (signal for zone in self.zones for signal in zone.signals)
+
+    @property
     def all_floors(self) -> typing.Iterable[Floor]:
-        return (zone.floor for zone in self.zones)
+        return (zone.floor for zone in self.zones if zone.material.name)
 
     async def all_ceilings(self) -> list[Ceiling]:
         result: list[Ceiling] = []
         for zone in self.zones:
             if not zone.ceiling:
+                continue
+            if not zone.ceiling_material.name:
                 continue
             if not zone.corners:
                 continue
@@ -167,6 +211,76 @@ class LevelDescription:
             dynamic_entity.pose.position = dynamic_entity.pose.position + diff
             for idx, wp in enumerate(dynamic_entity.waypoints):
                 dynamic_entity.waypoints[idx] = wp + diff
+        for microphone in self.microphones:
+            if microphone.frame.strip('/') == 'map':
+                microphone.position = microphone.position + diff
+
+    def validate_microphones(self) -> None:
+        zones = {zone.name: zone for zone in self.zones}
+        listener_ids: set[str] = set()
+        for microphone in self.microphones:
+            zone_name = microphone.zone.strip()
+            placement = microphone.placement.strip()
+            frame = microphone.frame.strip().strip('/')
+            if not zone_name or ':' in zone_name:
+                raise ValueError(
+                    f'invalid microphone zone {microphone.zone!r}'
+                )
+            if not placement or ':' in placement:
+                raise ValueError(
+                    f'invalid microphone placement {microphone.placement!r}'
+                )
+            if not frame:
+                raise ValueError(
+                    f'microphone in zone {zone_name!r} requires a TF frame'
+                )
+            if microphone.index < 1:
+                raise ValueError('microphone index must be at least 1')
+            zone = zones.get(zone_name)
+            if zone is None:
+                raise ValueError(
+                    f'microphone references unknown zone {zone_name!r}'
+                )
+            listener_id = microphone.listener_id
+            if listener_id in listener_ids:
+                raise ValueError(f'duplicate microphone {listener_id!r}')
+            listener_ids.add(listener_id)
+            if placement == 'ceiling' and (
+                not zone.ceiling or not zone.ceiling_material.name
+            ):
+                raise ValueError(
+                    f'ceiling microphone {listener_id!r} is in a zone '
+                    'without a ceiling'
+                )
+            if frame != 'map':
+                continue
+            import shapely
+
+            polygon = shapely.Polygon(
+                [(corner.x, corner.y) for corner in zone.corners]
+            )
+            point = shapely.Point(
+                microphone.position.x,
+                microphone.position.y,
+            )
+            if not polygon.covers(point):
+                raise ValueError(
+                    f'microphone {listener_id!r} is outside zone '
+                    f'{zone_name!r}'
+                )
+            if (
+                placement == 'ceiling'
+                and zone.ceiling_height is not None
+                and not math.isclose(
+                    microphone.position.z,
+                    zone.ceiling_height,
+                    abs_tol=MICROPHONE_PLACEMENT_TOLERANCE_M,
+                )
+            ):
+                raise ValueError(
+                    f'microphone {listener_id!r} z={microphone.position.z} '
+                    f'does not match ceiling height {zone.ceiling_height}'
+                )
 
     def lookup_zone_polygon(self, name: str) -> list[Position] | None:
         """Look up a zone, door, or elevator by name and return its polygon vertices."""
@@ -383,6 +497,24 @@ class LevelDescription:
             return tarfile.open(fileobj=io.BytesIO(tar_stream.getvalue()))
 
 
+_ZONE_KEY_ALIASES = {'mat': 'material', 'ceiling_mat': 'ceiling_material', 'wall_mat': 'wall_material'}
+
+
+def _structure_zone(value: object, cls: type) -> object:
+    if isinstance(value, cls):
+        return value
+    if isinstance(value, Mapping):
+        remapped = dict(value)
+        for alias, field in _ZONE_KEY_ALIASES.items():
+            if alias in remapped and field not in remapped:
+                remapped[field] = remapped.pop(alias)
+        value = remapped
+    return converter.structure_attrs_fromdict(value, cls)
+
+
+converter.register_structure_hook(LevelDescription.Zone, _structure_zone)
+
+
 @attrs.define
 class ElevatorDescriptor:
     """
@@ -413,7 +545,10 @@ class Level(LevelDescription):
 
     @classmethod
     def from_level_description(cls, level_description: LevelDescription) -> 'Level':
-        return cls(zones=level_description.zones)
+        return cls(
+            zones=level_description.zones,
+            microphones=level_description.microphones,
+        )
 
 
 @attrs.define
@@ -448,6 +583,7 @@ class WorldDescription:
                 _level = deepcopy(level)
                 _level.shift_all_positions(*origin)
                 out.zones.extend(_level.zones)
+                out.microphones.extend(_level.microphones)
 
             except KeyError as e:
                 raise KeyError(f"when creating compacted single world from WorldDescription, the origin for level {level_id} was not given") from e
@@ -459,7 +595,16 @@ class WorldDescription:
         warnings: list[str] = []
 
         elevator_levels: dict[str, str] = {}
+        microphone_ids: set[str] = set()
         for level_id, level in self.levels.items():
+            level.validate_microphones()
+            for microphone in level.microphones:
+                if microphone.listener_id in microphone_ids:
+                    raise RuntimeError(
+                        f'microphone {microphone.listener_id!r} appears in '
+                        'multiple levels'
+                    )
+                microphone_ids.add(microphone.listener_id)
             for elevator in level.all_elevators:
                 if elevator.name in elevator_levels:
                     raise RuntimeError(f"elevator '{elevator.name}' appears in multiple levels: {elevator_levels[elevator.name]} and {level_id}")
@@ -695,6 +840,7 @@ class WorldDescription:
 
             level.shift_all_positions(offset_x, offset_y)
             flattened_world.zones.extend(level.zones)
+            flattened_world.microphones.extend(level.microphones)
             level_origins[level_id] = (offset_x, offset_y)
 
             level_counts_per_row += 1
@@ -724,7 +870,10 @@ class WorldDescription:
             render_args["asset_name_color"] = kwargs["asset_name_color"]
 
         for level_id, level in self.levels.items():
-            level_desc = LevelDescription(zones=list(level.zones))
+            level_desc = LevelDescription(
+                zones=list(level.zones),
+                microphones=list(level.microphones),
+            )
             level_yaml = yaml.safe_dump(converter.unstructure(level_desc), sort_keys=False)
             files[f'{level_id}/world.yaml'] = level_yaml.encode('utf-8')
             png, origin = level_desc.render(**render_args)
@@ -820,6 +969,10 @@ class MultiLevelWorldView(PathView):
                     yield from ()
                     return
                 yield from (cls(entry.name) for entry in os.scandir(scenarios_dir) if entry.is_dir())
+
+            @classmethod
+            async def listall_async(cls, **kwargs: object) -> list[Self]:
+                return list(cls.listall(**kwargs))
 
             def load(self, path: Path, /, **kwargs: object) -> ScenarioView:
                 del kwargs
@@ -953,9 +1106,20 @@ class MultiLevelWorldView(PathView):
 
 class WorldIdentifier(Identifier[MultiLevelWorldView]):
     @classmethod
+    async def listall_async(cls, **kwargs: object) -> list[Self]:
+        return list(cls.listall(**kwargs))
+
+    @classmethod
     def listall(cls, **kwargs: object) -> Iterator[Self]:
         del kwargs
-        yield from (WorldIdentifier(name) for name in os.listdir(ASS_DIR / 'worlds') if name.lower() != 'readme.md')
+        seen: set[str] = set()
+        for root in [*_world_search_roots(), ASS_DIR / 'worlds']:
+            if not root.is_dir():
+                continue
+            for name in os.listdir(root):
+                if (root / name).is_dir() and name not in seen:
+                    seen.add(name)
+                    yield WorldIdentifier(name)
 
     def load(self, path: Path, /, **kwargs: object) -> MultiLevelWorldView:
         del kwargs
@@ -975,4 +1139,10 @@ class WorldIdentifier(Identifier[MultiLevelWorldView]):
         return name, ids or None
 
 
+def _world_search_roots() -> list[Path]:
+    """Extra world roots from ARENA_WORLD_PATH (colon-separated), searched before the canonical tree."""
+    return [Path(p) for p in os.environ.get('ARENA_WORLD_PATH', '').split(':') if p]
+
+
+WorldIdentifier.use(*(SimplePathResolver(WorldIdentifier, root) for root in _world_search_roots()))
 WorldIdentifier.use(FallbackResolver(WorldIdentifier, ASS_DIR / 'worlds'))

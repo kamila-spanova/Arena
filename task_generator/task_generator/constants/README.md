@@ -13,9 +13,9 @@ maps them to live ROS parameters.
 | `TASK_GENERATOR_SERVER_NODE` | `Namespace` | `"task_generator_server"` |
 | `SimSimulator` | `Enum` | `dummy`, `flatland`, `gazebo`, `unity`, `isaac` |
 | `ArenaType` | `Enum` | `training`, `deployment` |
-| `HumanSimulator` | `Enum` | `dummy`, `none`, `hunav`, `arena` |
+| `HumanSimulator` | `Enum` | `dummy`, `none`, `isaac`, `hunav`, `arena` |
 | `TaskMode.TM_Obstacles` | `Enum` | `parametrized`, `random`, `scenario`, `environment`, `prompt` |
-| `TaskMode.TM_Robots` | `Enum` | `guided`, `explore`, `random`, `scenario`, `demo` |
+| `TaskMode.TM_Robots` | `Enum` | `guided`, `explore`, `random`, `scenario`, `demo`, `stationary` |
 | `TaskMode.TM_Module` | `Enum` | `staged`, `dynamic_map`, `clear_forbidden_zones`, `rviz_ui` |
 
 `TM_Obstacles.default()` returns `RANDOM`. `TM_Robots.default()` returns
@@ -44,7 +44,7 @@ Config.General.RNG.stream("obstacles", "random")   # independent numpy Generator
 | `HUMAN` | `human` | `dummy` | `Constants.HumanSimulator` |
 | `WORLD` | `world` | *(required)* | `str` |
 
-`HUMAN`'s `dummy` default is only the bare ROS-param fallback (offline/test contexts). `task_generator.launch.py` always resolves `human` per sim first (`gazebo`/`isaac` → `arena`, `dummy` → `dummy`).
+`HUMAN`'s `dummy` default is only the bare ROS-param fallback (offline/test contexts). `task_generator.launch.py` always resolves `human` per sim first (`gazebo`/`isaac` -> `arena`, `dummy` -> `dummy`).
 
 ### `Config.General`
 
@@ -70,14 +70,14 @@ label, so draw order and concurrency cannot affect a given stream.
 | Attribute | ROS param | Default | Notes |
 | --- | --- | --- | --- |
 | `GOAL_TOLERANCE_RADIUS` | `goal_tolerance_radius` | `1.0` | metres |
-| `GOAL_TOLERANCE_ANGLE` | `goal_tolerance_angle` | `30°` (in radians) | |
+| `GOAL_TOLERANCE_ANGLE` | `goal_tolerance_angle` | 30 degrees (in radians) | |
 | `SPAWN_ROBOT_SAFE_DIST` | `robot_safe_dist` | `0.25` | metres |
 | `TIMEOUT` | `timeout` | `-1` | parsed to `inf` when negative |
 | `RECORD_DATA_DIR` | `record_data_dir` | `''` | `None` when empty |
 | `MOBILE_ADAPTER` | `robot.mobile_adapter` | `'nav2'` | default mobile-cap adapter kind, overridden per robot via scenario `mobile:` |
 | `ARM_ADAPTER` | `robot.arm_adapter` | `'moveit'` | default arm-cap adapter kind, overridden per robot via scenario `arm:` |
 
-Adapter-specific tunables (planners, RL agent, …) live in `caps/<cap>.yaml` and can be overridden at launch time via `<cap>.<key>:=<val>` flags. Each `<cap>.<key>:=<val>` lands on the task-generator node as ROS param `robot.<cap>.<key>` and is merged into the adapter's kwargs on top of the cap-file YAML.
+Adapter-specific tunables (planners, RL agent, ...) live in `caps/<cap>.yaml` and can be overridden at launch time via `<cap>.<key>:=<val>` flags. Each `<cap>.<key>:=<val>` lands on the task-generator node as ROS param `robot.<cap>.<key>` and is merged into the adapter's kwargs on top of the cap-file YAML.
 
 ### Node-level runtime params (declared with `ParameterDescriptor`)
 
@@ -89,7 +89,7 @@ Declared directly on `TaskGenerator` at construction time, not via `Configuratio
 | `run_seed` | random uuid hex | Hex string for per-episode blake2b seed derivation |
 | `episode_history_size` | `10` | Bounded history length for `state/episode` |
 
-`train_mode` is declared at the launch level and exposed on the task_generator node's param store for robot adapters (`rosnav_rl`, `nav2`) to read, the node itself does not branch on it. For managed (external-controller-driven) resets pass `auto_reset:=false` explicitly, there is no auto-derivation from `train_config`.
+`train_mode` is declared at the launch level (`robot.train`) and exposed on the task_generator node's param store for robot adapters (`rosnav_rl`, `nav2`) to read, the node itself does not branch on it. For managed (external-controller-driven) resets pass `task.auto_reset:=false` explicitly, there is no auto-derivation from `train_config`.
 
 ### `Config.TaskMode`
 

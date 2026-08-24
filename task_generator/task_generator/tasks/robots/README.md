@@ -47,10 +47,12 @@ an async `done` flag. Shipped modes:
 
 | Kind | File | Behavior |
 | --- | --- | --- |
-| `random` | [`random.py`](random.py) | one random reachable goal per robot per episode |
-| `explore` | [`explore.py`](explore.py) | extends `random`; when a robot finishes or times out, a fresh random goal is assigned |
-| `guided` | [`guided.py`](guided.py) | external controller drives the goal sequence |
-| `scenario` | [`scenario.py`](scenario.py) | reads `start`/`goal` pairs from the world's scenario YAML |
+| `random` | [`random/`](random/) | one random reachable goal per robot per episode |
+| `explore` | [`explore/`](explore/) | extends `random`; when a robot finishes or times out, a fresh random goal is assigned |
+| `guided` | [`guided/`](guided/) | external controller drives the goal sequence |
+| `stationary` | [`stationary/`](stationary/) | robot stays parked at start pose without goal dispatch |
+| `scenario` | [`scenario/`](scenario/) | reads `start`/`goal` pairs from the world's scenario YAML |
+| `characterization` | [`characterization/`](characterization/) | open-loop maneuver sweep: publishes exact `cmd_vel` profiles through the robot's rated envelope (no nav goals), tags each maneuver with `characterization_phase` markers, odom stall watchdog |
 | `null` | [`composite.py`](composite.py) | idle sink for robots unallocated by the fleet manager |
 | `composite` | [`composite.py`](composite.py) | fan-out: each sub-TM sees a scoped `TaskContext` covering only its allocated robots |
 

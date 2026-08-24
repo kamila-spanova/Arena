@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import os
-import traceback
 import typing
 from collections.abc import Callable
 
@@ -266,8 +265,6 @@ class RobotsManager(NodeInterface):
             yield t
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            self._logger.error(f'Error while providing node paths {e}\n{traceback.format_exc()}')
         finally:
             if t and not t.done():
                 t.cancel()
@@ -302,7 +299,7 @@ class RobotsManager(NodeInterface):
         from arena_robots.Robot import RobotIdentifier  # noqa: PLC0415
 
         ready = _ready_robot_names()
-        candidates: list[tuple[int, str]] = []
+        candidates: list[tuple[float, str]] = []
         for robot_id in RobotIdentifier.listall():
             name = robot_id.shortname
             if ready is not None and name not in ready:
@@ -316,7 +313,7 @@ class RobotsManager(NodeInterface):
             robot_sensors = {s.type for s in view.model_params.sensors}
             if not set(sensor_needs) <= robot_sensors:
                 continue
-            candidates.append((-view.model_params.priority, name))
+            candidates.append((view.model_params.priority, name))
 
         if not candidates:
             log.warn(f"arena: auto-robot fallback={_ARENA_DEFAULT_ROBOT!r}: no robot matched action_type={action_type!r} sensor_needs={sensor_needs!r}")

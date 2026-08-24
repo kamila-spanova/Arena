@@ -34,7 +34,7 @@ repositories:
   deps/arena_models:
     type: git
     url: https://github.com/voshch/arena-models
-    version: master@d4d8a13
+    version: master@8de4ef7
 
   # AAAAAAAA WHY IS #118 NOT VENDORED
   deps/topic_based_hardware_interfaces:
@@ -88,14 +88,15 @@ repositories:
     type: git
     url: https://github.com/voshch/hunav_sim.git
     version: jazzy
-  deps/hunav/people_msgs:
-    type: git
-    url: https://github.com/wg-perception/people.git
-    version: ros2
   deps/hunav/arena_hunav_sim_bridge:
     type: git
     url: https://github.com/ductaingn/arena_hunav_sim_bridge.git
     version: humble
+  # people_msgs is a hard dep of hunav_agent_manager
+  deps/people_msgs:
+    type: git
+    url: https://github.com/wg-perception/people.git
+    version: ros2
   deps/arena_text_crowd:
     type: git
     url: https://github.com/ductaingn/arena_text_crowd.git
@@ -109,6 +110,11 @@ repositories:
     type: git
     url: https://github.com/voshch/hri_rviz.git
     version: jazzy
+  # human_description forked for the 24-dof skeleton contract (3-dof waist + articulated ankles)
+  deps/human_description:
+    type: git
+    url: https://github.com/voshch/human_description.git
+    version: arena-v2
 
   # generic runtime declarative display control for rviz2 (msgs + plugin)
   deps/rviz_display_control:

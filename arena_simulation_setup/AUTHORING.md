@@ -71,6 +71,11 @@ Key points:
 - Multiple zones share a single flat `zones` list. Zone boundaries are defined
   only by their `corners` polygon and their `walls` list, with no explicit
   parent-child relationship.
+- An empty material opts a surface out entirely: `material: ''` on a zone
+  spawns no floor, `ceiling_material: ''` no ceiling, `material: ''` on a
+  wall entry drops that wall, and `wall_material: ''` on every zone of a
+  level suppresses the occupancy-detected collision walls. The short keys
+  `mat`, `ceiling_mat`, `wall_mat` are accepted as aliases.
 
 ### Ceilings
 
@@ -93,7 +98,117 @@ Ceilings are opaque from below and transparent from above. They are visual-only
 (no collision). With `ceiling_cast_shadows` false the ceiling does not occlude
 the sun, so interiors stay lit without global illumination.
 
+### Semantic annotations
+
+Door and elevator state is intrinsic: every spawned door/elevator publishes
+its full vocabulary (`state`/`progress`/`open`/... for a door; `arriving_eta`,
+`occupants`, `cabin_door`, `cabin_door_progress`, ... for an elevator) with no
+annotation needed. `semantics:` on a `doors:`/`elevators:` entry is only for
+attaching a *scripted* kind (`gate`, `pressure_plate`) to that entry. Zones
+accept an optional `semantics:` list of literal state/predicate primitives:
+
+```yaml
+zones:
+- name: lobby
+  corners: [...]
+  semantics:
+  - {state: max_speed, value: 1.5}
+  - {predicate: quiet, value: true}
+```
+
+An `Elevator` entry configures its fire-recall regime as a first-class field,
+not a semantics annotation:
+
+```yaml
+elevators:
+- name: 1_elevator
+  position: {x: 5.0, y: 0.0, z: 0.0}
+  destination: "2.2_elevator"
+  recall_on: alarm
+```
+
 Full field reference: [worlds/README.md](worlds/README.md).
+
+### M2 kinds, params, and timelines
+
+M2 adds scriptable/derived kinds on top of the intrinsic `door`/`elevator`
+vocabularies and `zone`. Each kind takes its config under a `params:` dict on
+the primitive or preset item, which round-trips opaquely (omitted on
+serialize when empty):
+
+| kind | attaches to | preset expansion | `params` keys |
+| --- | --- | --- | --- |
+| `signal` | a standalone `signals:` entry (zone-level) | `state`, `phase_remaining`, `stop` | `phases` (list of `{name, duration}`), `stop_phases`, `regime` |
+| `schedule` | a standalone `schedules:` entry (zone-level) | `state`, `active`, `window_remaining` | `windows` (list of `{start, end, value}`), `default`, `regime` |
+| `gate` | a `doors:` entry | `locked`, `blocked` | `authorized` (sim_paths/robot names), `unlock_on` |
+| `pressure_plate` | a `doors:`/`elevators:` entry (own `position`) | `pressed` | `position` (`[x, y]`), `radius`, `drives`, `latch`, `press_on`, `regime` |
+| `occupancy_cap` | a `zones:` entry | `occupancy`, `cap`, `over_cap` | `cap` |
+
+`signal` and `schedule` have no geometry of their own, so a zone carries them
+as sibling lists to `doors:`/`elevators:`:
+
+```yaml
+zones:
+- name: lobby
+  corners: [...]
+  schedules:
+  - name: fire_alarm
+    semantics:
+    - {preset: schedule, params: {windows: [], regime: alarm}}
+  signals:
+  - name: crosswalk_light
+    semantics:
+    - {preset: signal, params: {phases: [{name: go, duration: 20.0}, {name: stop, duration: 10.0}]}}
+```
+
+`gate` and `pressure_plate` reuse an existing `doors:`/`elevators:` entry as
+their attachment point, `occupancy_cap` reuses a `zones:` entry, all via the
+same `semantics:` list:
+
+```yaml
+doors:
+- name: north_fire_door
+  start: {x: 4.0, y: 1.55, z: 0.0}
+  end:   {x: 4.0, y: 2.45, z: 0.0}
+  semantics:
+  - {preset: gate, params: {authorized: [], unlock_on: alarm}}
+  - {preset: pressure_plate, params: {position: [4.0, 2.0], press_on: alarm, drives: north_fire_door}}
+```
+
+A `regime` (or its per-kind alias `unlock_on`/`press_on`) names a boolean
+asserted by a scripted kind's driving predicate. Other kinds (gate,
+pressure_plate) consult that name without a direct wire between the two
+entities. An elevator's `recall_on` field is the same regime-consult
+mechanism, just wired as a first-class `Elevator` field instead of a
+`semantics:` alias, since recall is mechanism configuration rather than
+published state. See the fire-alarm worked example below.
+
+### Scenario timelines
+
+`scenario.yaml` accepts an optional `timeline:` list. Each entry fires a `set`
+action list of `{entity, field, value}` writes against exactly one trigger:
+
+| trigger | meaning |
+| --- | --- |
+| `at: <seconds>` | fire once at episode second `t` |
+| `every: <seconds>` | fire each period, optional `offset`/`until` |
+| `when: {entity, field, is}` | fire on the false-to-true edge of a semantic value |
+
+```yaml
+timeline:
+- at: 12.0
+  set:
+  - {entity: fire_alarm, field: active, value: "true"}
+```
+
+At `t=12s` the `fire_alarm` schedule's `active` predicate goes true and
+asserts regime `alarm`: a gate with `unlock_on: alarm` reports `locked=false`,
+a pressure plate with `press_on: alarm` reports `pressed=true` and holds its
+`drives` door open, and an elevator with `recall_on: alarm` refuses calls and
+holds its cabin door open, all as pure regime consults with no per-effect
+timeline entry. See
+[worlds/three_storied_residential/scenarios/fire_alarm/scenario.yaml](worlds/three_storied_residential/scenarios/fire_alarm/scenario.yaml)
+for the reference timeline.
 
 ## 3. Generate the map
 
@@ -145,19 +260,18 @@ robots:
 An empty scenario (robot start/goal only) is valid. Add static obstacles by
 listing `Obstacle` entries under `static:`, dynamic pedestrians under `dynamic:`.
 
-For HuNav pedestrians include `behavior_tree:` pointing at either a shared
-library file (`BTRegularNav.xml`) or a path-relative file
-(`./hunav_1_behavior_tree.xml`):
+For HumanSim (arena_humansim) pedestrians include an `agent:` block. The
+`agent_type` is either a built-in type (`adult`, `elder`) or a path-relative
+agent-type YAML file (`./doctor.yaml`) defining scripted behavior
+(sequences, interactions):
 
 ```yaml
 dynamic:
 - name: agent_1
   model: female_adult_medical_01
-  behavior_tree: BTRegularNav.xml
-  pose: [2.0, 5.0, 0.0]
-  velocity: 1.2
-  desired_velocity: 1.2
-  waypoint:
+  agent: {agent_type: adult, desired_velocity: 1.2}
+  pose: [2.0, 5.0, 0.0]   # yaw in radians
+  waypoints:
   - [2.0, 5.0, 0.0]
   - [8.0, 5.0, 0.0]
 ```
