@@ -1296,7 +1296,12 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         response: task_generator_msgs.srv.QueryScenarios.Response,
     ) -> task_generator_msgs.srv.QueryScenarios.Response:
         world_name = request.world or self._episodes.current.world
-        response.ids = list(identifier_to_available(World.WorldIdentifier(world_name).resolve_sync().scenario))
+        try:
+            world_view = World.WorldIdentifier(world_name).resolve_sync()
+        except FileNotFoundError:
+            self.get_logger().warning(f'no scenarios: world {world_name!r} not found')
+            return response
+        response.ids = list(identifier_to_available(world_view.scenario))
         return response
 
     async def _cb_query_robots(

@@ -23,6 +23,14 @@ mkdir -p \
 `$ARENA_DIR` is the workspace source root. If unset, `touch_world` uses the
 current working directory.
 
+`WorldIdentifier` resolves a name against, in order: `ARENA_WORLD_PATH` roots,
+then this package's `worlds/`, then a network bucket named by `WORLD_BUCKETS`,
+then a local write-only fallback. Once authored, publish a world with
+`arena asset push world <name>`, which refuses to publish if any asset it
+references would not resolve for someone else. `arena asset find world <name>`
+shows which source a name currently resolves against. See
+[tree/README.md](src/arena_simulation_setup/tree/README.md).
+
 ## 2. Author `world.yaml`
 
 Create `worlds/$WORLD/world.yaml`. The minimum valid file is one zone with

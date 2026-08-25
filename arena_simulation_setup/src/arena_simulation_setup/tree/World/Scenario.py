@@ -11,7 +11,7 @@ import attrs
 import yaml
 
 from arena_simulation_setup.shared import DynamicObstacle, EpisodeCondition, Obstacle, Pose, Position
-from arena_simulation_setup.tree import PathView
+from arena_simulation_setup.tree import Identifier, PathView
 from arena_simulation_setup.utils.cattrs import ArenaConverter, Parseable, converter
 
 
@@ -237,6 +237,13 @@ class ScenarioView(PathView):
             dynamic=[converter.structure({**obs, **dict(included_from=self.path)}, DynamicObstacle) for obs in scenario.get("obstacles", {}).get("dynamic", [])],
             robots=[RobotGoal.parse(robot) for robot in scenario.get("robots", [])],
         )
+
+    def identifiers(self, converter: ArenaConverter = converter) -> Iterable[Identifier]:
+        """Every asset this scenario references. Pass the world's zone converter to read a
+        scenario that addresses zones by name."""
+        scenario = self.load(converter=converter)
+        for obstacle in itertools.chain(scenario.static, scenario.dynamic):
+            yield obstacle.model
 
     def load_audio(
         self,

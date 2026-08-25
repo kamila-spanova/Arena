@@ -216,15 +216,28 @@ A world that ships a custom `Wall` preset places it at
 
 ## How `WorldIdentifier` resolves a name
 
-`WorldIdentifier` is backed by a `FallbackResolver` rooted at
-`ASS_DIR / 'worlds'`
-([tree/World/World.py:271](../src/arena_simulation_setup/tree/World/World.py#L271)).
-`FallbackResolver` does not check existence before returning the path, so
-`.resolve()` succeeds even for worlds that do not exist yet (useful for
-programmatic world creation).
+Resolvers run in order, first hit wins
+([tree/World/World.py](../src/arena_simulation_setup/tree/World/World.py), bottom of file):
 
-`WorldIdentifier('hospital_1').resolve()` returns a `World` view object
-wrapping `<ASS_DIR>/worlds/hospital_1/`. Call `world.load()` to parse
+1. Each `ARENA_WORLD_PATH` root (colon-separated env var), if set.
+2. `ASS_DIR / 'worlds'`, the worlds shipped in this package, existence-checked.
+3. One `NetResolver` per `WORLD_BUCKETS` provider (default
+   `arena-worlds-prod-public`), fetching into `$ARENA_ASSETS_DIR/<bucket>/<name>/`.
+   A world keys off its bare name, so the worlds bucket is itself the namespace.
+4. A `FallbackResolver` rooted at `ASS_DIR / 'worlds'`. It never answers reads
+   and so can never shadow an earlier source. It only supplies a write target
+   (`resolve_write_path()` / `resolve_write_sync()`) for programmatic world creation.
+
+Worlds not shipped in this package are hosted in the public bucket(s) named
+by `WORLD_BUCKETS` and pulled on demand. `arena asset find world <name>`
+prints every resolver's verdict for a name (which one hit, which were
+shadowed). `arena asset pull world <name>` fetches one into the local cache.
+`arena asset push world <name>` publishes a locally-authored world after a
+preflight that checks every asset it references would resolve for someone
+else.
+
+`WorldIdentifier('hospital_1').resolve()` returns a `MultiLevelWorldView`
+wrapping whichever of the above resolved first. Call `world.load()` to parse
 `world.yaml` into a `WorldDescription`.
 
 ## Shipped worlds

@@ -24,12 +24,12 @@ pedestrian agents, and environment templates through the types defined here.
 
 | Script | Usage | Effect |
 |---|---|---|
-| `download_assets` | `download_assets [provider] [relpath]` | Fetches assets from a named network provider via `ros2 run arena_models arena_models net <provider> fetch` |
 | `generate_world` | `generate_world "<prompt>" [-e endpoint] [-o outdir]` | Posts a natural-language prompt to a generation server; extracts the returned zip into `worlds/<outdir>/` |
 | `model_staging` | `model_staging <install_dir>` | Creates symlinks in `<install_dir>` for all known robot models and writes a `deps` file |
+| `preload_world` | `preload_world <world_name> [--no-scenarios] [--dry-run]` | Resolves every identifier the world and its scenarios reference, downloading what is missing. `--dry-run` reports without transferring. Reached from the CLI as `arena preload`. |
 | `touch_world` | `touch_world <world_name> [--all] [--resolution N] [--assets color] ...` | Renders a preview `map.png` + `map.yaml` into the world dir for inspection; `--all` regenerates canonical per-level `world.yaml` + maps. The runtime renders its own map in-process, so this is an authoring aid, not required after editing. |
 
-Scripts live under [scripts/](scripts).
+Scripts live under [scripts/](scripts). To fetch a single asset by identifier, use `arena asset pull <kind> <name>`.
 
 ## Human assets and skeletal articulation
 

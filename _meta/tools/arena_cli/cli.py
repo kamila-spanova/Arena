@@ -3,6 +3,7 @@
 import os
 import sys
 
+import asset as _asset_mod
 import complete as _complete
 import features as _features
 import human as _human_mod
@@ -33,6 +34,7 @@ SECTIONS = {
     "Simulation": ["runtime", "env", "viz", "cleanup", "launch", "train", "demo", "lockstep"],
     "Attach": ["human", "robot", "cam"],
     "Workspace": ["build", "rebuild", "test", "deps", "update", "preload", "uninstall"],
+    "Data": ["asset"],
     "Features": ["feature", "registry"],
     "Shell": ["deactivate", "resource", "repair"],
 }
@@ -199,6 +201,7 @@ def env_(args: list[str]) -> None:
     _exec("ros2", "launch", "task_generator", "task_generator.launch.py", *args)
 
 
+_register(_asset_mod.VERB)
 _register(_viz_mod.VERB)
 _register(_human_mod.VERB)
 _register(_robot_mod.VERB)
@@ -352,11 +355,11 @@ def lockstep(args: list[str]) -> None:
     )
 
 
-@verb("preload", passthrough=True, complete=Union(Manifest("world"), Flags({"--no-scenarios": "skip scenario assets"})))
+@verb("preload", passthrough=True, complete=Union(Manifest("world"), Flags({"--no-scenarios": "skip scenario assets", "--dry-run": "report what is missing without downloading"})))
 def preload(args: list[str]) -> None:
-    """Preload a world's assets ahead of launch.
+    """Preload a world's assets ahead of launch. `arena launch` does this for you.
 
-    `arena preload <world_name> [--no-scenarios]`.
+    `arena preload <world_name> [--no-scenarios] [--dry-run]`.
     """
     if not args:
         raise CLIError("missing argument WORLD")
