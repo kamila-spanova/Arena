@@ -278,11 +278,20 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     map_type=''
     map_state=''
     microphone_node=''
+    map_requested=0
     while ((SECONDS <= deadline)); do
         kill -0 "$LAUNCH_CLIENT_PID" 2>/dev/null || { tail -n 80 "$launch_log" >&2; die 'Arena exited during startup'; }
         episode_action="$(run_in_arena ros2 action list 2>/dev/null | grep '/lifecycle/run_episode$' | head -n 1 || true)"
         if [[ -n "$episode_action" ]]; then
             env_namespace="${episode_action%/lifecycle/run_episode}"
+            if ((map_requested == 0)); then
+                require_map_type="$(run_in_arena ros2 service type "${env_namespace}/runtime/require_map" 2>/dev/null || true)"
+                if [[ "$require_map_type" == 'std_srvs/srv/Empty' ]]; then
+                    note "requesting map server for ${env_namespace}"
+                    run_in_arena ros2 service call "${env_namespace}/runtime/require_map" std_srvs/srv/Empty '{}' >/dev/null
+                    map_requested=1
+                fi
+            fi
             raw_type="$(run_in_arena ros2 topic type "${env_namespace}/jackal/audio/raw_array" 2>/dev/null || true)"
             rendered_type="$(run_in_arena ros2 topic type "${env_namespace}/jackal/audio/headphones/stereo" 2>/dev/null || true)"
             map_type="$(run_in_arena ros2 topic type "${env_namespace}/map" 2>/dev/null || true)"
