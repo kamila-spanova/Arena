@@ -525,6 +525,7 @@ def build_labels(
     *,
     frame_ms: float,
     max_pose_gap_ms: float,
+    emit_robot_only: bool = False,
     context: dict[str, Any] | None = None,
     occupancy_map: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -561,6 +562,9 @@ def build_labels(
             raw_offset = round((timestamp_ns - raw_summary["first_timestamp_ns"]) * rate / 1_000_000_000)
             if 0 <= raw_offset < raw.shape[0]:
                 common.update(_audio_features(raw, raw_offset, min(raw_offset + hop, raw.shape[0]), "raw"))
+        if not pedestrians and emit_robot_only:
+            rows.append({**common, "pedestrian_present": False})
+            continue
         for ped_key, ped_rows in pedestrians.items():
             ped = _interp(ped_rows, timestamp_ns, max_gap_ns)
             if ped is None:
@@ -760,7 +764,13 @@ def export(args: argparse.Namespace) -> Path:
         for rows in data["pedestrians"].values()
         for row in rows
     }
-    if not pedestrian_frames or any(not frame or not _same_frame(frame, map_frame) for frame in pedestrian_frames):
+    if not pedestrian_frames:
+        if not args.allow_missing_pedestrians:
+            raise ValueError(
+                "recording has no pedestrian pose samples; it cannot produce source-position labels "
+                "(use --allow-missing-pedestrians only for audio/robot-only export)"
+            )
+    elif any(not frame or not _same_frame(frame, map_frame) for frame in pedestrian_frames):
         raise ValueError(
             f"pedestrian poses must use occupancy-map frame {map_frame!r}; found {sorted(pedestrian_frames)}"
         )
@@ -787,6 +797,7 @@ def export(args: argparse.Namespace) -> Path:
     labels = build_labels(
         rendered, rendered_summary, raw, raw_summary, robot_rows, data["pedestrians"],
         frame_ms=args.label_frame_ms, max_pose_gap_ms=args.max_pose_gap_ms,
+        emit_robot_only=args.allow_missing_pedestrians,
         context=context, occupancy_map=map_snapshot,
     )
     rendered_audio_name = f"{prefix}recording.flac" if prefix else "rendered.flac"
@@ -828,6 +839,7 @@ def export(args: argparse.Namespace) -> Path:
         "occupancy_map": map_metadata,
         "door_mask": door_metadata,
         "pedestrian_count": len(data["pedestrians"]),
+        "has_pedestrian_labels": bool(data["pedestrians"]),
         "label_rows": len(labels),
         "rendered_rms": rendered_rms,
         "rendered_peak": float(np.max(np.abs(rendered))),
@@ -883,6 +895,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--silence-rms-threshold", type=float, default=1e-5)
     parser.add_argument("--clipping-fraction-threshold", type=float, default=0.01)
     parser.add_argument("--raw-flac", action="store_true", help="also make a listening-oriented FLAC; float MCAP remains the lossless raw representation")
+    parser.add_argument(
+        "--allow-missing-pedestrians",
+        action="store_true",
+        help="export audio/robot-only metadata when no pedestrian state samples were recorded; not valid source-position training data",
+    )
     parser.add_argument("--force", action="store_true")
     return parser
 

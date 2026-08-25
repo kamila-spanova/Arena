@@ -4,18 +4,17 @@ import csv
 import struct
 
 import numpy as np
-
 from arena_simulation_setup.acoustics.export_recording import (
     PCM_F32LE,
     AudioBlock,
     assemble_audio,
     build_labels,
     clip_audio_chunks,
-    select_map_snapshot,
-    write_map_snapshot,
     occupancy_ray_labels,
+    select_map_snapshot,
     transform_robot_trajectory,
     write_csv,
+    write_map_snapshot,
 )
 
 
@@ -136,6 +135,28 @@ def test_labels_join_audio_to_interpolated_robot_and_pedestrian_pose():
     assert labels[1]["rendered_ch0_rms"] == 0.5
     assert labels[1]["recording_sample_offset"] == 10
     assert labels[1]["recording_time_seconds"] == 0.01
+
+
+def test_labels_can_emit_robot_audio_rows_without_pedestrian_samples():
+    audio = np.ones((10, 2), dtype=np.float32) * 0.25
+    summary = {
+        "sample_rate": 1000,
+        "first_timestamp_ns": 1_000_000_000,
+        "first_sample_index": 0,
+    }
+    robot = [{
+        "timestamp_ns": 1_000_000_000, "x": 1.0, "y": 2.0, "z": 0.0,
+        "yaw": 0.0, "vx": 0.0, "vy": 0.0, "vz": 0.0, "yaw_rate": 0.0,
+    }]
+
+    labels = build_labels(
+        audio, summary, audio, summary, robot, {},
+        frame_ms=10, max_pose_gap_ms=20, emit_robot_only=True,
+    )
+
+    assert len(labels) == 1
+    assert labels[0]["pedestrian_present"] is False
+    assert labels[0]["robot_x"] == 1.0
 
 
 def test_metadata_csv_preserves_synchronized_scalar_labels(tmp_path):
