@@ -52,7 +52,7 @@ from task_generator.manager.world_manager.world_manager_ros import (
 )
 from task_generator.shared import Orientation, Pose, Position
 from task_generator.simulators.human import BaseHumanSimulator, HumanSimulatorRegistry
-from task_generator.tasks import identifier_to_available
+from task_generator.tasks import identifier_to_available, identifier_to_available_async
 from task_generator.tasks.obstacles import ObstacleKind
 from task_generator.tasks.registry import MODULE_MODES, OBSTACLES_MODES, ROBOTS_MODES
 from task_generator.tasks.task import Task
@@ -1312,7 +1312,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         request: task_generator_msgs.srv.QueryStaticObstacles.Request,
         response: task_generator_msgs.srv.QueryStaticObstacles.Response,
     ) -> task_generator_msgs.srv.QueryStaticObstacles.Response:
-        response.ids = list(identifier_to_available(arena_simulation_setup.tree.assets.Object.ObjectIdentifier, network=True))
+        response.ids = await identifier_to_available_async(arena_simulation_setup.tree.assets.Object.ObjectIdentifier, network=True)
         return response
 
     async def _cb_query_dynamic_obstacles(
@@ -1320,11 +1320,9 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         request: task_generator_msgs.srv.QueryDynamicObstacles.Request,
         response: task_generator_msgs.srv.QueryDynamicObstacles.Response,
     ) -> task_generator_msgs.srv.QueryDynamicObstacles.Response:
-        response.ids = list(
-            identifier_to_available(
-                arena_simulation_setup.tree.assets.Human.HumanIdentifier,
-                network=True,
-            )
+        response.ids = await identifier_to_available_async(
+            arena_simulation_setup.tree.assets.Human.HumanIdentifier,
+            network=True,
         )
         return response
 

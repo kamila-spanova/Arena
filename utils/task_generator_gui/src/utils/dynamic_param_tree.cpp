@@ -20,8 +20,8 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -156,76 +156,12 @@ void DynamicParamTree::retryRebuild(const std::string& namespace_prefix)
                     state->values      = std::move(kept_values);
                 }
 
-                std::set<std::string> needed;
-                for (const auto &desc : state->descriptors)
+                QMetaObject::invokeMethod(tree_, [this, state, this_gen]()
                 {
-                    std::string rest = desc.additional_constraints;
-                    while (!rest.empty())
-                    {
-                        size_t semi  = rest.find(';');
-                        std::string token = (semi == std::string::npos) ? rest : rest.substr(0, semi);
-                        rest = (semi == std::string::npos) ? std::string() : rest.substr(semi + 1);
-                        if (token.rfind("catalog:", 0) == 0)
-                            needed.insert(token.substr(8));
-                    }
-                }
-                {
-                    std::lock_guard<std::mutex> lk(state->mtx);
-                    state->needed_catalogs = needed;
-                }
-
-                if (needed.empty())
-                {
-                    QMetaObject::invokeMethod(tree_, [this, state, this_gen]()
-                    {
-                        if (this_gen != rebuild_gen_) return;
-                        buildTreeWidgets(state);
-                    }, Qt::QueuedConnection);
-                    return;
-                }
-
-                state->pending_catalogs.store(static_cast<int>(needed.size()));
-
-                for (const auto &cat : needed)
-                {
-                    if (catalog_fetcher_)
-                    {
-                        catalog_fetcher_(
-                            cat,
-                            [this, state, this_gen, cat](std::vector<std::string> ids)
-                            {
-                                {
-                                    std::lock_guard<std::mutex> lk(state->mtx);
-                                    state->catalog_cache[cat] = std::move(ids);
-                                }
-                                if (--state->pending_catalogs == 0)
-                                {
-                                    QMetaObject::invokeMethod(tree_,
-                                        [this, state, this_gen]()
-                                        {
-                                            if (this_gen != rebuild_gen_) return;
-                                            buildTreeWidgets(state);
-                                        }, Qt::QueuedConnection);
-                                }
-                            });
-                    }
-                    else
-                    {
-                        {
-                            std::lock_guard<std::mutex> lk(state->mtx);
-                            state->catalog_cache[cat] = {};
-                        }
-                        if (--state->pending_catalogs == 0)
-                        {
-                            QMetaObject::invokeMethod(tree_,
-                                [this, state, this_gen]()
-                                {
-                                    if (this_gen != rebuild_gen_) return;
-                                    buildTreeWidgets(state);
-                                }, Qt::QueuedConnection);
-                        }
-                    }
-                }
+                    if (this_gen != rebuild_gen_) return;
+                    buildTreeWidgets(state);
+                    fetchCatalogs(this_gen);
+                }, Qt::QueuedConnection);
             };
 
             params_client_->describe_parameters(
@@ -257,6 +193,7 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
     tree_->clear();
     widget_map_->clear();
     type_map_->clear();
+    catalog_widgets_.clear();
 
     // A node that does not know a listed name answers describe/get with an empty list.
     if (state->descriptors.size() != state->param_names.size()
@@ -343,25 +280,31 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
         else if (constraints.rfind("catalog:", 0) == 0 && ptype == PT::PARAMETER_STRING_ARRAY)
         {
             const std::string catalog_name = constraints.substr(8);
-            const auto &items = state->catalog_cache[catalog_name];
-            auto *cb = new MultiSelectComboBox();
             const auto &selected = param.as_string_array();
-            for (const auto &entry : items)
+            auto *cb = new MultiSelectComboBox();
+            for (const auto &entry : seedCatalogItems(catalog_name, selected))
             {
                 int checked = std::find(selected.begin(), selected.end(), entry) != selected.end() ? 1 : 0;
                 cb->addItem(QString::fromStdString(entry), checked);
             }
             cb->stateChanged(1);
+            cb->setProperty("catalog", QString::fromStdString(catalog_name));
+            catalog_widgets_[catalog_name].push_back(cb);
             w = cb;
         }
         else if (constraints.rfind("catalog:", 0) == 0 && ptype == PT::PARAMETER_STRING)
         {
             const std::string catalog_name = constraints.substr(8);
-            const auto &items = state->catalog_cache[catalog_name];
+            const auto current = param.as_string();
+            std::vector<std::string> selected;
+            if (!current.empty())
+                selected.push_back(current);
             auto *cb = new QComboBox();
-            for (const auto &entry : items)
+            for (const auto &entry : seedCatalogItems(catalog_name, selected))
                 cb->addItem(QString::fromStdString(entry));
-            cb->setCurrentText(QString::fromStdString(param.as_string()));
+            cb->setCurrentText(QString::fromStdString(current));
+            cb->setProperty("catalog", QString::fromStdString(catalog_name));
+            catalog_widgets_[catalog_name].push_back(cb);
             w = cb;
         }
         else if (constraints.rfind("enum:", 0) == 0 && ptype == PT::PARAMETER_STRING)
@@ -555,6 +498,78 @@ void DynamicParamTree::buildTreeWidgets(const std::shared_ptr<RebuildState>& sta
 
 // ---------------------------------------------------------------------------
 
+std::vector<std::string> DynamicParamTree::seedCatalogItems(
+    const std::string& catalog, const std::vector<std::string>& current) const
+{
+    std::vector<std::string> items;
+    auto memo = catalog_memo_.find(catalog);
+    if (memo != catalog_memo_.end())
+        items = memo->second;
+    for (const auto &c : current)
+        if (std::find(items.begin(), items.end(), c) == items.end())
+            items.push_back(c);
+    return items;
+}
+
+void DynamicParamTree::fetchCatalogs(uint64_t gen)
+{
+    if (!catalog_fetcher_)
+        return;
+
+    for (const auto &entry : catalog_widgets_)
+    {
+        const std::string cat = entry.first;
+        catalog_fetcher_(cat, [this, gen, cat](std::vector<std::string> ids)
+        {
+            QMetaObject::invokeMethod(tree_, [this, gen, cat, ids = std::move(ids)]()
+            {
+                catalog_memo_[cat] = ids;
+                if (gen != rebuild_gen_) return;
+                fillCatalogWidgets(cat, ids);
+            }, Qt::QueuedConnection);
+        });
+    }
+}
+
+void DynamicParamTree::fillCatalogWidgets(const std::string& catalog, const std::vector<std::string>& ids)
+{
+    auto it = catalog_widgets_.find(catalog);
+    if (it == catalog_widgets_.end())
+        return;
+
+    for (QWidget *w : it->second)
+    {
+        if (auto *msc = qobject_cast<MultiSelectComboBox *>(w))
+        {
+            QSignalBlocker blk(msc);
+            const QStringList checked = msc->currentText();
+            msc->clear();
+            for (const auto &entry : ids)
+            {
+                const QString qs = QString::fromStdString(entry);
+                msc->addItem(qs, checked.contains(qs) ? 1 : 0);
+            }
+            for (const QString &c : checked)
+                if (std::find(ids.begin(), ids.end(), c.toStdString()) == ids.end())
+                    msc->addItem(c, 1);
+            msc->stateChanged(1);
+        }
+        else if (auto *combo = qobject_cast<QComboBox *>(w))
+        {
+            QSignalBlocker blk(combo);
+            const QString cur = combo->currentText();
+            combo->clear();
+            for (const auto &entry : ids)
+                combo->addItem(QString::fromStdString(entry));
+            if (!cur.isEmpty() && combo->findText(cur) < 0)
+                combo->addItem(cur);
+            combo->setCurrentText(cur);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 void DynamicParamTree::setWidgetValueFromParam(QWidget *w, const rcl_interfaces::msg::Parameter &p)
 {
     const uint8_t ptype = p.value.type;
@@ -588,7 +603,10 @@ void DynamicParamTree::setWidgetValueFromParam(QWidget *w, const rcl_interfaces:
         if (auto *combo = qobject_cast<QComboBox *>(w))
         {
             QSignalBlocker blk(combo);
-            combo->setCurrentText(QString::fromStdString(p.value.string_value));
+            const QString text = QString::fromStdString(p.value.string_value);
+            if (!text.isEmpty() && combo->findText(text) < 0 && combo->property("catalog").isValid())
+                combo->addItem(text);
+            combo->setCurrentText(text);
         }
         else if (auto *te = qobject_cast<QTextEdit *>(w))
         {

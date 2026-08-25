@@ -735,11 +735,8 @@ analysis. The current bundled assets contain precomputed values.
 
 Docker playback uses the host PulseAudio/PipeWire compatibility socket. The
 image installs `libasound2-plugins`, Compose forwards the socket as
-`/tmp/pulse/native`, and four-mic automatic selection prefers the `pulse`
-device when `PULSE_SERVER` is set. This avoids
-opening raw `hw:0,0`, which is exclusive and unavailable while the host sound
-server owns the analog card. Rebuild/recreate the Arena container after a
-Docker audio configuration change.
+`/tmp/pulse/native`, `auditory.playback:=auto` prefers the `pulse` device
+(then `pipewire`, `default`, and the PortAudio default).
 
 RViz draws the complete source-to-portals-to-listener line and one cube per
 portal. Pedestrian-listener propagation is blue; robot-listener propagation
