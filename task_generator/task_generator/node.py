@@ -25,7 +25,7 @@ import task_generator_msgs.action
 import task_generator_msgs.msg
 import task_generator_msgs.srv
 import tf2_ros
-from arena_rclpy_mixins import ArenaMixinNode
+from arena_rclpy_mixins import ArenaMixinNode, Time
 from arena_rclpy_mixins.Async import ClientWrapper
 from arena_rclpy_mixins.shared import Namespace
 from arena_robots.Sensor import SensorType
@@ -93,6 +93,7 @@ class EpisodeRecord:
     outcome_info: str = ""
     goal_uuid: str = ""
     integrity: bool = True
+    start_time: Time = attrs.Factory(Time)
 
 
 @attrs.define
@@ -552,6 +553,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
         msg.outcome_info = record.outcome_info
         msg.goal_uuid = record.goal_uuid
         msg.integrity = record.integrity
+        msg.start_time = record.start_time.to_msg()
         msg.conditions = json.dumps([c.serialize() for c in self._episode_conditions])
         return msg
 
@@ -1187,6 +1189,9 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
 
             self._pub_state_world.publish(String(data=record.world))
 
+            # This is the first instant at which the reset world, robot and
+            # pedestrians are all committed. Dataset export clips audio to it.
+            record.start_time = self.sim_time
             record.outcome_state = task_generator_msgs.action.RunEpisode.Result.RUNNING
             self._publish_episode_state()
 
