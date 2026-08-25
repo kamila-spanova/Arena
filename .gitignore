@@ -80,3 +80,9 @@ htmlcov/
 
 # agents
 /arena_training/agents/
+
+# Generated acoustics inputs and recording outputs. Keep recorder source tracked.
+/arena_simulation_setup/acoustics/worlds/
+/arena_simulation_setup/acoustics/generated/
+/data/audio_train_set/
+/data/audio_train_set_test/

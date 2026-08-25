@@ -27,6 +27,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.time import Time as RosTime
 from std_msgs.msg import ColorRGBA, Float32MultiArray, String
 from task_generator_msgs.msg import (
     AudioFrame,
@@ -181,6 +182,7 @@ class MicrophoneArrayNode(Node):
         self._robot_frame_prefix = ""
         self._publishers_ready = False
         self._cursor = 0
+        self._stream_start_ns: int | None = None
         self._clips: list[list[ScheduledClip]] = [[] for _ in CHANNEL_NAMES]
         self._event_loads: dict[str, EventLoad] = {}
         self._semantic_event_groups: dict[str, SemanticEventGroup] = {}
@@ -242,7 +244,6 @@ class MicrophoneArrayNode(Node):
         self.create_timer(
             self.block_size / self.sample_rate,
             self._publish_block,
-            clock=self._steady_clock,
         )
         self.create_timer(0.25, self._publish_markers)
         self.create_timer(
@@ -294,6 +295,10 @@ class MicrophoneArrayNode(Node):
         self._headphone_pub = self.create_publisher(AudioFrame, f"{prefix}/headphones/stereo", 10)
         self._tdoa_pub = self.create_publisher(String, f"{prefix}/diagnostics/tdoa", 10)
         self._publishers_ready = True
+        # Audio sample zero is anchored once in ROS simulation time. Every
+        # later block stamp is derived from the sample cursor, so timer jitter
+        # cannot desynchronize audio from robot/pedestrian poses.
+        self._stream_start_ns = self.get_clock().now().nanoseconds
         if str(self.get_parameter("audio_device").value).strip() not in {"", "none"}:
             with self._output_lock:
                 for _ in range(2):
@@ -743,6 +748,9 @@ class MicrophoneArrayNode(Node):
     def _publish_block(self) -> None:
         if not self._publishers_ready:
             return
+        if self._stream_start_ns is None:
+            self._stream_start_ns = self.get_clock().now().nanoseconds
+        block_start = self._cursor
         self._poll_loads()
         raw = self._render_raw()
         enabled = bool(self.get_parameter("enabled").value)
@@ -767,7 +775,12 @@ class MicrophoneArrayNode(Node):
         )
         if not bool(self.get_parameter("headphones_enabled").value):
             stereo.fill(0.0)
-        stamp = self.get_clock().now().to_msg()
+        # AudioFrame.header.stamp is the simulation time of this block's first
+        # sample. Sample i is therefore stamp + i / sample_rate.
+        stamp_ns = self._stream_start_ns + round(
+            block_start * 1_000_000_000 / self.sample_rate
+        )
+        stamp = RosTime(nanoseconds=stamp_ns).to_msg()
         self._raw_pub.publish(self._audio_frame(raw, stamp, CHANNEL_NAMES))
         for index, publisher in enumerate(self._channel_pubs):
             publisher.publish(self._audio_frame(raw[index:index + 1], stamp, (CHANNEL_NAMES[index],)))

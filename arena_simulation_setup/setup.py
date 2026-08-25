@@ -21,6 +21,22 @@ def _walk_data_files(*roots):
                 yield (os.path.join('share', package_name, base), kept)
 
 
+def _walk_data_files_into(root, destination):
+    """Install a source tree below a different package-share directory."""
+    for base, _dirs, files in os.walk(root):
+        kept = [
+            os.path.join(base, name)
+            for name in files
+            if os.path.isfile(os.path.join(base, name))
+            and name != '.DS_Store'
+            and '__pycache__' not in base.split(os.sep)
+        ]
+        if kept:
+            relative = os.path.relpath(base, root)
+            target = destination if relative == '.' else os.path.join(destination, relative)
+            yield (os.path.join('share', package_name, target), kept)
+
+
 setup(
     name=package_name,
     version='1.0.0',
@@ -32,6 +48,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         *_walk_data_files('configs', 'launch', 'worlds', 'assets'),
+        (
+            os.path.join('share', package_name, 'acoustics'),
+            ['acoustics/README.md', 'acoustics/record_acoustics_dataset.sh'],
+        ),
+        *_walk_data_files_into('acoustics/worlds', 'worlds'),
     ],
     install_requires=[
         'setuptools',
@@ -39,6 +60,10 @@ setup(
         'attrs',
         'shapely',
         'pillow',
+        'numpy',
+        'pyarrow',
+        'mcap',
+        'mcap-ros2-support',
     ],
     extras_require={
         'test': ['pytest>=7', 'hypothesis>=6'],
@@ -58,6 +83,8 @@ setup(
         'console_scripts': [
             f'generate_world = {package_name}.utils.generative.world_generator:main',
             f'world_generator = {package_name}.utils.generative.world_generator_ros:main',
+            f'export_acoustics_recording = {package_name}.acoustics.export_recording:main',
+            f'wait_acoustics_capture = {package_name}.acoustics.wait_capture:main',
         ],
     },
 )
