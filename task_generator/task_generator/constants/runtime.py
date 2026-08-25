@@ -81,6 +81,12 @@ def Configuration(server: ROSParamServer) -> type:
                 parse=_positive_or_inf,
             )
 
+            READY_TIMEOUT = server.ROSParam[float](
+                'robot.ready_timeout',
+                -1,
+                parse=_positive_or_inf,
+            )
+
             RECORD_DATA_DIR = server.ROSParam[str | None](
                 'record_data_dir',
                 '',

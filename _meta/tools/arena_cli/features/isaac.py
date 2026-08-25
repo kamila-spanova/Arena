@@ -167,10 +167,13 @@ def launch_host(argv: list[str]) -> None:
 
 def launch_container(argv: list[str]) -> None:
     """Launch Isaac Sim in its container."""
+    import signal
+
     common._reg_require(NAME)
     rc = features.compose(["up", "-d", "--remove-orphans", "isaac"])
     if rc:
         sys.exit(rc)
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
     try:
         rc = features.compose(
             [
@@ -185,6 +188,8 @@ def launch_container(argv: list[str]) -> None:
             ]
         )
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         features.compose(["stop", "isaac"])
     sys.exit(rc)
 

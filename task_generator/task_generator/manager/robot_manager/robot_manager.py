@@ -562,7 +562,8 @@ class RobotManager(NodeInterface):
             async with self.node.unpause_window():
                 await self.node.await_sim_step()
                 self._launch_handle = await self.node.do_launch_tracked(launch_description)
-                await asyncio.gather(*(a.wait_until_ready(self, node_paths) for a in self._adapter_instances))
+                ready_timeout = self.node.conf.Robot.READY_TIMEOUT.value
+                await asyncio.gather(*(a.await_ready(self, node_paths, ready_timeout) for a in self._adapter_instances))
                 await self.wait_controllers_active()
             for adapter in self._adapter_instances:
                 await adapter.on_controllers_active(self)

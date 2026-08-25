@@ -19,6 +19,12 @@ class SemanticCfg(Parseable, Serializable):
     distance: float = -1.0
     params: dict = attrs.field(factory=dict)
 
+    def __attrs_post_init__(self) -> None:
+        if self.binding == 'joint':
+            raise ValueError('binding: joint is reserved and not supported in v1')
+        if self.trigger == 'contact':
+            raise ValueError('trigger: contact is reserved and not supported in v1')
+
     @classmethod
     def parse(cls, value: dict) -> 'SemanticCfg':
         """Parse a single state/predicate primitive, not a preset."""
@@ -33,11 +39,7 @@ class SemanticCfg(Parseable, Serializable):
             raise ValueError(f'semantics primitive must have a state or predicate key: {value}')
 
         binding = value.pop('binding', 'kinematic')
-        if binding == 'joint':
-            raise ValueError('binding: joint is reserved and not supported in v1')
         trigger = value.pop('trigger', 'proximity')
-        if trigger == 'contact':
-            raise ValueError('trigger: contact is reserved and not supported in v1')
         cfg_value = value.pop('value', None)
         distance = float(value.pop('distance', -1.0))
         params = dict(value.pop('params', {}))

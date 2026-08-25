@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
@@ -216,6 +217,25 @@ class Adapter(ABC):
         node_paths: set[str],
     ) -> None:
         await asyncio.gather(*(c.wait_ready() for c in self._clients.values()))
+
+    async def await_ready(
+        self,
+        robot: RobotManager,
+        node_paths: set[str],
+        timeout: float,
+    ) -> None:
+        """wait_until_ready, bounded when timeout is finite. Expiry raises, failing the episode instead of wedging the env."""
+        if not math.isfinite(timeout):
+            await self.wait_until_ready(robot, node_paths)
+            return
+        try:
+            async with asyncio.timeout(timeout) as scope:
+                await self.wait_until_ready(robot, node_paths)
+        except TimeoutError:
+            if not scope.expired():
+                raise
+            endpoints = ", ".join(c.action_endpoint() for c in self._clients.values())
+            raise TimeoutError(f"adapter {self.kind!r} for robot {robot.name!r} not ready after {timeout:.0f}s, still waiting on action servers [{endpoints}] or adapter nodes (the preceding 'waiting on' warnings name the holdout)") from None
 
     @abstractmethod
     async def dispatch_phase(

@@ -110,6 +110,16 @@ def test_structure_list_of_semanticcfg_rejects_joint_binding():
         converter.structure([{'state': 'state', 'binding': 'joint'}], list[SemanticCfg])
 
 
+def test_structure_field_form_rejects_joint_binding():
+    with pytest.raises(ValueError):
+        converter.structure({'role': 'state', 'name': 'state', 'binding': 'joint'}, SemanticCfg)
+
+
+def test_structure_field_form_rejects_contact_trigger():
+    with pytest.raises(ValueError):
+        converter.structure({'role': 'predicate', 'name': 'open', 'trigger': 'contact'}, SemanticCfg)
+
+
 def test_unstructure_semanticcfg_round_trip():
     cfgs = parse_semantics([{'preset': 'gate', 'distance': 2.0}])
     raw = converter.unstructure(cfgs)

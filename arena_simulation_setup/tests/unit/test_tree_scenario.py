@@ -368,6 +368,37 @@ def test_timeline_entry_requires_exactly_one_trigger_multiple_set():
         TimelineEntry.parse({"at": 1.0, "every": 2.0, "set": []})
 
 
+def test_timeline_entry_parse_rejects_unknown_key():
+    with pytest.raises(ValueError):
+        TimelineEntry.parse({"at": 1.0, "sett": []})
+
+
+def test_timeline_entry_structure_rejects_typoed_trigger_key():
+    with pytest.raises(ValueError):
+        converter.structure({"att": 1.0, "set": []}, TimelineEntry)
+
+
+def test_timeline_entry_structure_rejects_zero_triggers():
+    with pytest.raises(ValueError):
+        converter.structure({"set": []}, TimelineEntry)
+
+
+def test_timeline_entry_structure_rejects_multiple_triggers():
+    with pytest.raises(ValueError):
+        converter.structure({"at": 1.0, "every": 2.0, "set": []}, TimelineEntry)
+
+
+def test_timeline_entry_structure_valid_entry_loads():
+    entry = converter.structure({"at": 12.0, "set": [{"entity": "fire_alarm", "field": "active", "value": "true"}]}, TimelineEntry)
+    assert entry.at == pytest.approx(12.0)
+    assert entry.set == [{"entity": "fire_alarm", "field": "active", "value": "true"}]
+
+
+def test_timeline_entry_constructor_rejects_zero_triggers():
+    with pytest.raises(ValueError):
+        TimelineEntry(set=[])
+
+
 def test_timeline_entry_round_trip_through_cattrs():
     entry = TimelineEntry.parse({"at": 12.0, "set": [{"entity": "fire_alarm", "field": "active", "value": "true"}]})
     raw = converter.unstructure(entry)

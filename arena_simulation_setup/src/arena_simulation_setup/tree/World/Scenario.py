@@ -190,12 +190,10 @@ class TimelineEntry(Parseable):
     until: float | None = None
     when: dict | None = None
 
-    @classmethod
-    def parse(cls, value: dict) -> "TimelineEntry":
-        triggers = [key for key in ("at", "every", "when") if value.get(key) is not None]
+    def __attrs_post_init__(self) -> None:
+        triggers = [name for name, value in (("at", self.at), ("every", self.every), ("when", self.when)) if value is not None]
         if len(triggers) != 1:
             raise ValueError(f"timeline entry must set exactly one of 'at', 'every', 'when'; got {triggers}")
-        return converter.structure_attrs_fromdict(dict(value), cls)
 
 
 _MODERN_ONLY_KEYS: frozenset[str] = frozenset({"conditions", "timeline", "regions"})
