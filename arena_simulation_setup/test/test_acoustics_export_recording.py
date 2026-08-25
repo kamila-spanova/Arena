@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import struct
+from types import SimpleNamespace
 
 import numpy as np
 from arena_simulation_setup.acoustics.export_recording import (
     PCM_F32LE,
     AudioBlock,
+    _agent_states_pedestrians,
     assemble_audio,
     build_labels,
     clip_audio_chunks,
@@ -157,6 +159,33 @@ def test_labels_can_emit_robot_audio_rows_without_pedestrian_samples():
     assert len(labels) == 1
     assert labels[0]["pedestrian_present"] is False
     assert labels[0]["robot_x"] == 1.0
+
+
+def test_agent_states_are_human_source_pose_samples_in_map_frame():
+    header = SimpleNamespace(stamp=SimpleNamespace(sec=7, nanosec=25), frame_id="")
+    human = SimpleNamespace(
+        agent_id=12, kind=0,
+        pose=SimpleNamespace(x=1.5, y=-2.0, theta=0.75),
+        velocity=SimpleNamespace(x=0.3, y=0.4, z=0.0),
+        radius=0.35, desired_velocity=1.2, agent_type="adult", policy="social_force",
+    )
+    robot = SimpleNamespace(
+        agent_id=99, kind=1,
+        pose=SimpleNamespace(x=0.0, y=0.0, theta=0.0),
+        velocity=SimpleNamespace(x=0.0, y=0.0, z=0.0),
+        radius=0.4, desired_velocity=0.0, agent_type="", policy="",
+    )
+
+    decoded = _agent_states_pedestrians(
+        SimpleNamespace(header=header, agents=[human, robot]), "/arena/env_0/agent_states", 1
+    )
+
+    assert list(decoded) == ["agent_12"]
+    row = decoded["agent_12"][0]
+    assert row["timestamp_ns"] == 7_000_000_025
+    assert row["frame_id"] == "map"
+    assert row["yaw"] == 0.75
+    assert row["state_source"] == "agent_states"
 
 
 def test_metadata_csv_preserves_synchronized_scalar_labels(tmp_path):

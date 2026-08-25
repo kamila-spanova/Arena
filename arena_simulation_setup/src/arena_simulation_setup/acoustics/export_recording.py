@@ -50,10 +50,44 @@ class HeaderLike(Protocol):
     stamp: StampLike
 
 
+class HeaderWithFrameLike(HeaderLike, Protocol):
+    """ROS Header which also supplies the coordinate-frame identifier."""
+
+    frame_id: str
+
+
 class HeaderMessageLike(Protocol):
     """Message which may expose a ROS Header."""
 
     header: HeaderLike | None
+
+
+class Pose2DLike(Protocol):
+    x: float
+    y: float
+    theta: float
+
+
+class Vector3Like(Protocol):
+    x: float
+    y: float
+    z: float
+
+
+class AgentStateLike(Protocol):
+    agent_id: int
+    kind: int
+    pose: Pose2DLike
+    velocity: Vector3Like
+    desired_velocity: float
+    radius: float
+    agent_type: str
+    policy: str
+
+
+class AgentStatesLike(Protocol):
+    header: HeaderWithFrameLike
+    agents: Iterable[AgentStateLike]
 
 
 @dataclass(frozen=True)
@@ -215,13 +249,59 @@ def _header_time_or_log_time(msg: HeaderMessageLike, log_time: int) -> int:
     return stamp_ns(header.stamp)
 
 
+def _agent_states_pedestrians(
+    message: AgentStatesLike,
+    topic: str,
+    log_time: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Convert HumanSim's batched AgentStates stream into pedestrian samples.
+
+    AgentState.pose uses the world occupancy-map coordinate system.  The
+    HumanSim publisher historically leaves ``header.frame_id`` empty, so map is
+    its documented implicit frame in that case.  Robots can be published in
+    the same batch and must not become acoustic sound-source labels.
+    """
+    timestamp_ns = _header_time_or_log_time(message, log_time)
+    frame_id = str(message.header.frame_id).strip() or "map"
+    pedestrians: dict[str, list[dict[str, Any]]] = {}
+    for agent in message.agents:
+        # AgentState.KIND_HUMAN is 0 and KIND_ROBOT is 1.  Retain the explicit
+        # comparison rather than assuming every state in the batch is a human.
+        if int(agent.kind) != 0:
+            continue
+        agent_id = int(agent.agent_id)
+        agent_type = str(agent.agent_type)
+        policy = str(agent.policy)
+        key = f"agent_{agent_id}"
+        pedestrians.setdefault(key, []).append({
+            "timestamp_ns": timestamp_ns,
+            "pedestrian_id": agent_id,
+            "pedestrian_name": key,
+            "x": float(agent.pose.x), "y": float(agent.pose.y), "z": 0.0,
+            "yaw": float(agent.pose.theta),
+            "vx": float(agent.velocity.x), "vy": float(agent.velocity.y),
+            "vz": float(agent.velocity.z),
+            "animation_state": None,
+            "model_uri": "",
+            "radius": float(agent.radius),
+            "desired_velocity": float(agent.desired_velocity),
+            "agent_type": agent_type,
+            "policy": policy,
+            "state_source": "agent_states",
+            "topic": topic,
+            "frame_id": frame_id,
+        })
+    return pedestrians
+
+
 def read_mcap(path: Path) -> dict[str, Any]:
     from mcap.reader import make_reader
     from mcap_ros2.decoder import DecoderFactory
 
     audio: dict[str, list[AudioBlock]] = {"raw": [], "rendered": []}
     odom: dict[str, list[dict[str, Any]]] = {}
-    pedestrians: dict[str, list[dict[str, Any]]] = {}
+    arena_pedestrians: dict[str, list[dict[str, Any]]] = {}
+    agent_state_pedestrians: dict[str, list[dict[str, Any]]] = {}
     maps: dict[str, list[dict[str, Any]]] = {"map": [], "door_mask": []}
     transforms: dict[tuple[str, str], list[dict[str, Any]]] = {}
     clocks: list[int] = []
@@ -318,7 +398,7 @@ def read_mcap(path: Path) -> dict[str, Any]:
                 ts = _header_time_or_log_time(ros_msg, message.log_time)
                 for ped in ros_msg.pedestrians:
                     key = str(ped.name) or str(ped.id)
-                    pedestrians.setdefault(key, []).append({
+                    arena_pedestrians.setdefault(key, []).append({
                         "timestamp_ns": ts,
                         "pedestrian_id": int(ped.id), "pedestrian_name": str(ped.name),
                         "x": float(ped.pose.position.x), "y": float(ped.pose.position.y),
@@ -326,9 +406,16 @@ def read_mcap(path: Path) -> dict[str, Any]:
                         "vx": float(ped.twist.linear.x), "vy": float(ped.twist.linear.y),
                         "vz": float(ped.twist.linear.z),
                         "animation_state": int(ped.animation_state),
-                        "model_uri": str(ped.model_uri), "topic": topic,
+                        "model_uri": str(ped.model_uri),
+                        "radius": None, "desired_velocity": None,
+                        "agent_type": "", "policy": "", "state_source": "arena_peds",
+                        "topic": topic,
                         "frame_id": str(ros_msg.header.frame_id),
                     })
+            elif topic.endswith("/agent_states") and hasattr(ros_msg, "agents"):
+                decoded = _agent_states_pedestrians(ros_msg, topic, message.log_time)
+                for key, rows in decoded.items():
+                    agent_state_pedestrians.setdefault(key, []).extend(rows)
             elif topic.endswith("/state/episode"):
                 episode_events.append({
                     "timestamp_ns": int(message.log_time),
@@ -355,8 +442,16 @@ def read_mcap(path: Path) -> dict[str, Any]:
             for chunk in ordered
         ]
 
+    # arena_peds is the task-generator's richer pedestrian projection.  Older
+    # recordings may contain only HumanSim's agent_states stream, which is an
+    # equally time-stamped source of human poses; use it as a strict fallback
+    # so a bag recording both topics does not generate duplicate labels.
+    pedestrians = arena_pedestrians or agent_state_pedestrians
     return {
         "audio": audio, "odom": odom, "pedestrians": pedestrians,
+        "pedestrian_state_source": "arena_peds" if arena_pedestrians else (
+            "agent_states" if agent_state_pedestrians else None
+        ),
         "clock": clocks, "episodes": episode_events, "topic_types": topic_types,
         "maps": maps,
         "transforms": transforms,
@@ -586,6 +681,11 @@ def build_labels(
                 "pedestrian_x": ped["x"], "pedestrian_y": ped["y"], "pedestrian_z": ped["z"],
                 "pedestrian_yaw": ped["yaw"], "pedestrian_vx": ped["vx"], "pedestrian_vy": ped["vy"],
                 "pedestrian_model_uri": ped["model_uri"],
+                "pedestrian_radius_m": ped.get("radius"),
+                "pedestrian_desired_velocity_mps": ped.get("desired_velocity"),
+                "pedestrian_agent_type": ped.get("agent_type", ""),
+                "pedestrian_policy": ped.get("policy", ""),
+                "pedestrian_state_source": ped.get("state_source", "arena_peds"),
                 "relative_x_world": dx, "relative_y_world": dy,
                 "relative_z_world": dz,
                 "relative_x_robot": relative_x_robot, "relative_y_robot": relative_y_robot,
@@ -839,6 +939,7 @@ def export(args: argparse.Namespace) -> Path:
         "occupancy_map": map_metadata,
         "door_mask": door_metadata,
         "pedestrian_count": len(data["pedestrians"]),
+        "pedestrian_state_source": data["pedestrian_state_source"],
         "has_pedestrian_labels": bool(data["pedestrians"]),
         "label_rows": len(labels),
         "rendered_rms": rendered_rms,
