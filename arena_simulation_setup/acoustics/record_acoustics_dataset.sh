@@ -286,9 +286,9 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
             env_namespace="${episode_action%/lifecycle/run_episode}"
             if ((map_requested == 0)); then
                 require_map_type="$(run_in_arena ros2 service type "${env_namespace}/runtime/require_map" 2>/dev/null || true)"
-                if [[ "$require_map_type" == 'std_srvs/srv/Empty' ]]; then
+                if [[ "$require_map_type" == 'std_srvs/srv/Trigger' ]]; then
                     note "requesting map server for ${env_namespace}"
-                    run_in_arena ros2 service call "${env_namespace}/runtime/require_map" std_srvs/srv/Empty '{}' >/dev/null
+                    run_in_arena ros2 service call "${env_namespace}/runtime/require_map" std_srvs/srv/Trigger '{}' >/dev/null
                     map_requested=1
                 fi
             fi
