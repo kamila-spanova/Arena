@@ -279,6 +279,7 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     map_state=''
     microphone_node=''
     map_requested=0
+    map_request_pending_noted=0
     while ((SECONDS <= deadline)); do
         kill -0 "$LAUNCH_CLIENT_PID" 2>/dev/null || { tail -n 80 "$launch_log" >&2; die 'Arena exited during startup'; }
         episode_action="$(run_in_arena ros2 action list 2>/dev/null | grep '/lifecycle/run_episode$' | head -n 1 || true)"
@@ -288,8 +289,13 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
                 require_map_type="$(run_in_arena ros2 service type "${env_namespace}/runtime/require_map" 2>/dev/null || true)"
                 if [[ "$require_map_type" == 'std_srvs/srv/Trigger' ]]; then
                     note "requesting map server for ${env_namespace}"
-                    run_in_arena ros2 service call "${env_namespace}/runtime/require_map" std_srvs/srv/Trigger '{}' >/dev/null
-                    map_requested=1
+                    map_response="$(run_in_arena ros2 service call "${env_namespace}/runtime/require_map" std_srvs/srv/Trigger '{}' 2>&1 || true)"
+                    if [[ "$map_response" == *'success=True'* || "$map_response" == *'success: true'* ]]; then
+                        map_requested=1
+                    elif ((map_request_pending_noted == 0)); then
+                        note 'map server request was deferred until task generator initialization completes'
+                        map_request_pending_noted=1
+                    fi
                 fi
             fi
             raw_type="$(run_in_arena ros2 topic type "${env_namespace}/jackal/audio/raw_array" 2>/dev/null || true)"
