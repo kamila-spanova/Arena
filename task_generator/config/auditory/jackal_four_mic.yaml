@@ -27,8 +27,9 @@
     # All four reliable HeardSoundEvent results must arrive before one
     # array-derived semantic robot-hearing event is emitted.
     semantic_group_timeout_sec: 1.0
-    # Align the procedural model's established -9 dB monitor trim with the
-    # raw MEMS level domain before the separate monitor preamp is applied.
+    # Align the procedural model's -15.0206 dB motor trim (half the previous
+    # -9 dB linear amplitude) with the raw MEMS level domain before the
+    # separate monitor preamp is applied.
     motor_mems_calibration_db: -40.0
     tdoa_enabled: true
     max_tdoa_seconds: 0.002

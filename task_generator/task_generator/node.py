@@ -25,9 +25,10 @@ import task_generator_msgs.action
 import task_generator_msgs.msg
 import task_generator_msgs.srv
 import tf2_ros
-from arena_rclpy_mixins import ArenaMixinNode, Time
+from arena_rclpy_mixins import ArenaMixinNode
 from arena_rclpy_mixins.Async import ClientWrapper
 from arena_rclpy_mixins.shared import Namespace
+from arena_rclpy_mixins.Time import Time
 from arena_robots.Sensor import SensorType
 from arena_runtime.sim import BaseSim, SimulatorRegistry
 from arena_simulation_setup.tree.World.Scenario import EpisodeCondition, TimelineEntry

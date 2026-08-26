@@ -69,9 +69,11 @@ walks it calling `destination()`.
 |---|---|
 | `DynamicPaths.WORLD` | `/dev/null` (set at runtime to the active world directory) |
 | `DynamicPaths.ARENA` | `$ARENA_ASSETS_DIR_LOCAL` or `$ARENA_ASSETS_DIR/local` |
+| `DynamicPaths.BUILTIN` | The installed `arena_simulation_setup/assets` directory |
 
-`DynamicPaths.as_resolvers(T)` returns two `DynamicPathResolver` instances for a
-given `Identifier` type: one pointing at `WORLD / 'assets'` and one at `ARENA`.
+`DynamicPaths.as_resolvers(T)` returns three `DynamicPathResolver` instances for
+a given `Identifier` type: `WORLD / 'assets'`, `ARENA`, and the package's
+bundled defaults, in that order.
 
 ## Shipped Identifiers
 

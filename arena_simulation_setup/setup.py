@@ -1,39 +1,31 @@
 import os
-from setuptools import setup, find_namespace_packages
+from collections.abc import Iterator
+
+from setuptools import find_namespace_packages, setup
 
 package_name = 'arena_simulation_setup'
 python_root = 'src'
 
 
-def _walk_data_files(*roots):
+def _walk_data_files(*roots: str) -> Iterator[tuple[str, list[str]]]:
     # os.path.isfile filters out dangling symlinks. colcon --symlink-install
     # populates the build dir with per-file symlinks into source and does not
     # prune them when source files are deleted, so os.walk would otherwise
     # hand setuptools broken symlinks and the copy step would abort.
     for root in roots:
         for base, _dirs, files in os.walk(root):
-            kept = [
-                os.path.join(base, f)
-                for f in files
-                if os.path.isfile(os.path.join(base, f))
-            ]
+            kept = [os.path.join(base, f) for f in files if os.path.isfile(os.path.join(base, f))]
             if kept:
                 yield (os.path.join('share', package_name, base), kept)
 
 
-def _walk_data_files_into(root, destination):
-    """Install a source tree below a different package-share directory.
-
-    The acoustics source tree deliberately lives outside ``worlds``.  Mapping it
-    into the installed ``worlds`` directory makes it visible to WorldIdentifier
-    without introducing a second mutable source tree in the checkout.
-    """
+def _walk_data_files_into(
+    root: str,
+    destination: str,
+) -> Iterator[tuple[str, list[str]]]:
+    """Install a source tree below a different package-share directory."""
     for base, _dirs, files in os.walk(root):
-        kept = [
-            os.path.join(base, f)
-            for f in files
-            if os.path.isfile(os.path.join(base, f))
-        ]
+        kept = [os.path.join(base, name) for name in files if os.path.isfile(os.path.join(base, name)) and name != '.DS_Store' and '__pycache__' not in base.split(os.sep)]
         if kept:
             relative = os.path.relpath(base, root)
             target = destination if relative == '.' else os.path.join(destination, relative)
@@ -61,7 +53,6 @@ setup(
         'setuptools',
         'requests',
         'attrs',
-        'PyYAML',
         'shapely',
         'pillow',
         'numpy',
@@ -78,6 +69,7 @@ setup(
     description='arena_simulation_setup.',
     license='MIT',
     scripts=[
+        'scripts/download_assets',
         'scripts/model_staging',
         'scripts/preload_world',
         'scripts/touch_world',
@@ -88,6 +80,7 @@ setup(
             f'world_generator = {package_name}.utils.generative.world_generator_ros:main',
             f'export_acoustics_recording = {package_name}.acoustics.export_recording:main',
             f'wait_acoustics_capture = {package_name}.acoustics.wait_capture:main',
+            f'normalize_acoustics_scenarios = {package_name}.acoustics.scenario_layout:main',
         ],
     },
 )

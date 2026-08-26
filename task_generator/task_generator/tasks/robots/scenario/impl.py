@@ -1,3 +1,5 @@
+import asyncio
+
 from arena_rclpy_mixins.ROSParamServer import ROSParamT
 from arena_simulation_setup.tree.World import WorldIdentifier
 from arena_simulation_setup.tree.World.Scenario import RobotGoal, ScenarioGesturePhase, ScenarioGotoPhase
@@ -9,12 +11,15 @@ from task_generator.tasks.robots.request import GoToPhase, PlayGesturePhase, Tas
 
 class TM_Scenario(TM_Robots):
     _config: ROSParamT[list[RobotGoal]]
+    _linger_after_completion: ROSParamT[bool]
+    _idle_robots: set[str]
 
     def _parse_scenario(self, scenario: str) -> list[RobotGoal]:
         return WorldIdentifier(self._ctx.world_manager.loaded_world).resolve_sync().scenario(scenario).resolve_sync().load().robots
 
     async def reset(self, **kwargs: object) -> None:
         await super().reset(**kwargs)
+        self._idle_robots = set()
 
         SCENARIO_ROBOTS = self._config.value
 
@@ -59,8 +64,29 @@ class TM_Scenario(TM_Robots):
                 elif isinstance(phase, ScenarioGesturePhase):
                     phases.append(PlayGesturePhase(gesture=None if phase.gesture in ("", "random") else phase.gesture, instance=phase.instance))
 
-            await robot.submit_task(TaskRequest(phases=phases))
+            # An empty phase list intentionally describes a stationary robot.
+            # Do not submit it to RobotManager: an empty TaskRequest has no
+            # dispatchable phase.  Keep the scenario active until its normal
+            # timeout (or until another non-idle robot finishes) so that
+            # recordings can capture pedestrians passing a parked robot.
+            if phases:
+                await robot.submit_task(TaskRequest(phases=phases))
+            else:
+                self._idle_robots.add(robot.name)
             self._ctx.world_manager.forbid(forbidden)
+
+    @property
+    async def done(self) -> bool:
+        """Treat empty scenario phase lists as parked, not completed, robots."""
+        if (self.node.sim_time.sec - self._last_reset) > self.node.conf.Robot.TIMEOUT.value:
+            return True
+
+        active_robots = [manager for name, manager in self._ctx.robots.items() if name not in self._idle_robots]
+        if not active_robots:
+            return False
+        if self._linger_after_completion.value:
+            return False
+        return all(await asyncio.gather(*(manager.is_done for manager in active_robots)))
 
     def __init__(self, **kwargs: object) -> None:
         TM_Robots.__init__(self, **kwargs)
@@ -69,4 +95,8 @@ class TM_Scenario(TM_Robots):
             self.namespace('file'),
             'default.json',
             parse=self._parse_scenario,
+        )
+        self._linger_after_completion = self.node.ROSParam[bool](
+            self.namespace('linger_after_completion'),
+            False,
         )

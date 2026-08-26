@@ -17,7 +17,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Protocol, Sequence
 
 import numpy as np
 import pyarrow as pa
@@ -26,6 +26,8 @@ import yaml
 
 PCM_S16LE = 1
 PCM_F32LE = 2
+OUTCOME_LABELS = {0: "QUEUED", 1: "RUNNING", 2: "SUCCESS", 3: "FAILED", 4: "SKIPPED", 5: "FATAL"}
+TERMINAL_OUTCOMES = frozenset((2, 3, 4, 5))
 
 
 class StampLike(Protocol):
@@ -50,10 +52,44 @@ class HeaderLike(Protocol):
     stamp: StampLike
 
 
+class HeaderWithFrameLike(HeaderLike, Protocol):
+    """ROS Header which also supplies the coordinate-frame identifier."""
+
+    frame_id: str
+
+
 class HeaderMessageLike(Protocol):
     """Message which may expose a ROS Header."""
 
     header: HeaderLike | None
+
+
+class Pose2DLike(Protocol):
+    x: float
+    y: float
+    theta: float
+
+
+class Vector3Like(Protocol):
+    x: float
+    y: float
+    z: float
+
+
+class AgentStateLike(Protocol):
+    agent_id: int
+    kind: int
+    pose: Pose2DLike
+    velocity: Vector3Like
+    desired_velocity: float
+    radius: float
+    agent_type: str
+    policy: str
+
+
+class AgentStatesLike(Protocol):
+    header: HeaderWithFrameLike
+    agents: Iterable[AgentStateLike]
 
 
 @dataclass(frozen=True)
@@ -68,6 +104,7 @@ class AudioBlock:
     channel_names: tuple[str, ...]
     microphone_frame: str
     payload: bytes
+    frame_ids: tuple[str, ...] = ()
     microphone_positions: tuple[tuple[float, float, float], ...] = ()
     microphone_yaw_rad: tuple[float, ...] = ()
 
@@ -116,20 +153,23 @@ def clip_audio_chunks(chunks: Iterable[AudioBlock], start_ns: int, end_ns: int |
         if first >= last:
             continue
         frame_bytes = width * chunk.channels
-        clipped.append(AudioBlock(
-            topic=chunk.topic,
-            timestamp_ns=chunk.timestamp_ns + round(first * 1_000_000_000 / chunk.sample_rate),
-            first_sample_index=chunk.first_sample_index + first,
-            sample_rate=chunk.sample_rate,
-            channels=chunk.channels,
-            encoding=chunk.encoding,
-            stream_id=chunk.stream_id,
-            channel_names=chunk.channel_names,
-            microphone_frame=chunk.microphone_frame,
-            payload=chunk.payload[first * frame_bytes:last * frame_bytes],
-            microphone_positions=chunk.microphone_positions,
-            microphone_yaw_rad=chunk.microphone_yaw_rad,
-        ))
+        clipped.append(
+            AudioBlock(
+                topic=chunk.topic,
+                timestamp_ns=chunk.timestamp_ns + round(first * 1_000_000_000 / chunk.sample_rate),
+                first_sample_index=chunk.first_sample_index + first,
+                sample_rate=chunk.sample_rate,
+                channels=chunk.channels,
+                encoding=chunk.encoding,
+                stream_id=chunk.stream_id,
+                channel_names=chunk.channel_names,
+                frame_ids=chunk.frame_ids,
+                microphone_frame=chunk.microphone_frame,
+                payload=chunk.payload[first * frame_bytes : last * frame_bytes],
+                microphone_positions=chunk.microphone_positions,
+                microphone_yaw_rad=chunk.microphone_yaw_rad,
+            )
+        )
     return clipped
 
 
@@ -158,32 +198,33 @@ def assemble_audio(chunks: Iterable[AudioBlock]) -> tuple[np.ndarray, list[dict[
         if delta:
             pieces.append(np.zeros((delta, channels), dtype=np.float32))
             gap_total += delta
-        expected_timestamp_ns = origin_ns + round(
-            (chunk.first_sample_index - origin_index) * 1_000_000_000 / rate
-        )
+        expected_timestamp_ns = origin_ns + round((chunk.first_sample_index - origin_index) * 1_000_000_000 / rate)
         timestamp_error_ns = chunk.timestamp_ns - expected_timestamp_ns
         max_timestamp_error_ns = max(max_timestamp_error_ns, abs(timestamp_error_ns))
         frames = pcm_as_float32(chunk)
         output_sample_index = sum(piece.shape[0] for piece in pieces)
         pieces.append(frames)
-        timing.append({
-            "topic": chunk.topic,
-            "timestamp_ns": chunk.timestamp_ns,
-            "expected_timestamp_ns": expected_timestamp_ns,
-            "timestamp_error_ns": timestamp_error_ns,
-            "first_sample_index": chunk.first_sample_index,
-            "output_sample_index": output_sample_index,
-            "frame_count": chunk.frame_count,
-            "gap_frames_before": delta,
-            "sample_rate": rate,
-            "channels": channels,
-            "encoding": encoding,
-            "stream_id": chunk.stream_id,
-            "microphone_frame": chunk.microphone_frame,
-            "channel_names": list(chunk.channel_names),
-            "microphone_positions": list(chunk.microphone_positions),
-            "microphone_yaw_rad": list(chunk.microphone_yaw_rad),
-        })
+        timing.append(
+            {
+                "topic": chunk.topic,
+                "timestamp_ns": chunk.timestamp_ns,
+                "expected_timestamp_ns": expected_timestamp_ns,
+                "timestamp_error_ns": timestamp_error_ns,
+                "first_sample_index": chunk.first_sample_index,
+                "output_sample_index": output_sample_index,
+                "frame_count": chunk.frame_count,
+                "gap_frames_before": delta,
+                "sample_rate": rate,
+                "channels": channels,
+                "encoding": encoding,
+                "stream_id": chunk.stream_id,
+                "microphone_frame": chunk.microphone_frame,
+                "channel_names": list(chunk.channel_names),
+                "frame_ids": list(chunk.frame_ids),
+                "microphone_positions": list(chunk.microphone_positions),
+                "microphone_yaw_rad": list(chunk.microphone_yaw_rad),
+            }
+        )
         expected_index = chunk.first_sample_index + chunk.frame_count
 
     audio = np.concatenate(pieces, axis=0)
@@ -194,6 +235,7 @@ def assemble_audio(chunks: Iterable[AudioBlock]) -> tuple[np.ndarray, list[dict[
         "channels": channels,
         "encoding": encoding,
         "channel_names": list(first.channel_names),
+        "frame_ids": list(first.frame_ids),
         "microphone_frame": first.microphone_frame,
         "microphone_positions": list(first.microphone_positions),
         "microphone_yaw_rad": list(first.microphone_yaw_rad),
@@ -215,13 +257,102 @@ def _header_time_or_log_time(msg: HeaderMessageLike, log_time: int) -> int:
     return stamp_ns(header.stamp)
 
 
+def _agent_states_pedestrians(
+    message: AgentStatesLike,
+    topic: str,
+    log_time: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Convert HumanSim's batched AgentStates stream into pedestrian samples.
+
+    AgentState.pose uses the world occupancy-map coordinate system.  The
+    HumanSim publisher historically leaves ``header.frame_id`` empty, so map is
+    its documented implicit frame in that case.  Robots can be published in
+    the same batch and must not become acoustic sound-source labels.
+    """
+    timestamp_ns = _header_time_or_log_time(message, log_time)
+    frame_id = str(message.header.frame_id).strip() or "map"
+    pedestrians: dict[str, list[dict[str, Any]]] = {}
+    for agent in message.agents:
+        # AgentState.KIND_HUMAN is 0 and KIND_ROBOT is 1.  Retain the explicit
+        # comparison rather than assuming every state in the batch is a human.
+        if int(agent.kind) != 0:
+            continue
+        agent_id = int(agent.agent_id)
+        agent_type = str(agent.agent_type)
+        policy = str(agent.policy)
+        key = f"agent_{agent_id}"
+        pedestrians.setdefault(key, []).append(
+            {
+                "timestamp_ns": timestamp_ns,
+                "pedestrian_id": agent_id,
+                "pedestrian_name": key,
+                "x": float(agent.pose.x),
+                "y": float(agent.pose.y),
+                "z": 0.0,
+                "yaw": float(agent.pose.theta),
+                "vx": float(agent.velocity.x),
+                "vy": float(agent.velocity.y),
+                "vz": float(agent.velocity.z),
+                "animation_state": None,
+                "model_uri": "",
+                "radius": float(agent.radius),
+                "desired_velocity": float(agent.desired_velocity),
+                "agent_type": agent_type,
+                "policy": policy,
+                "state_source": "agent_states",
+                "state_source_topic": topic,
+                "topic": topic,
+                "frame_id": frame_id,
+            }
+        )
+    return pedestrians
+
+
+def _merge_pedestrian_sources(
+    arena_rows: dict[str, list[dict[str, Any]]],
+    agent_rows: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Keep Arena pose/name/model data and enrich it with HumanSim metadata."""
+    if not arena_rows:
+        return agent_rows
+    by_id: dict[int, list[dict[str, Any]]] = {}
+    for rows in agent_rows.values():
+        if rows:
+            by_id.setdefault(int(rows[0]["pedestrian_id"]), []).extend(rows)
+    for rows in by_id.values():
+        rows.sort(key=lambda row: row["timestamp_ns"])
+
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for key, rows in arena_rows.items():
+        combined: list[dict[str, Any]] = []
+        for row in rows:
+            agent = _interp(by_id.get(int(row["pedestrian_id"]), []), row["timestamp_ns"], 250_000_000)
+            if agent is None:
+                combined.append(row)
+                continue
+            combined.append(
+                {
+                    **row,
+                    "radius": agent.get("radius"),
+                    "desired_velocity": agent.get("desired_velocity"),
+                    "agent_type": agent.get("agent_type", ""),
+                    "policy": agent.get("policy", ""),
+                    "state_source": "arena_peds+agent_states",
+                    "state_source_topic": [row["topic"], agent["topic"]],
+                }
+            )
+        merged[key] = combined
+    return merged
+
+
 def read_mcap(path: Path) -> dict[str, Any]:
     from mcap.reader import make_reader
     from mcap_ros2.decoder import DecoderFactory
 
     audio: dict[str, list[AudioBlock]] = {"raw": [], "rendered": []}
     odom: dict[str, list[dict[str, Any]]] = {}
-    pedestrians: dict[str, list[dict[str, Any]]] = {}
+    arena_pedestrians: dict[str, list[dict[str, Any]]] = {}
+    agent_state_pedestrians: dict[str, list[dict[str, Any]]] = {}
     maps: dict[str, list[dict[str, Any]]] = {"map": [], "door_mask": []}
     transforms: dict[tuple[str, str], list[dict[str, Any]]] = {}
     clocks: list[int] = []
@@ -233,58 +364,53 @@ def read_mcap(path: Path) -> dict[str, Any]:
         for schema, channel, message, ros_msg in reader.iter_decoded_messages(log_time_order=True):
             topic = "/" + channel.topic.strip("/")
             topic_types[topic] = schema.name
-            audio_role = (
-                "raw" if topic.endswith("/audio/raw_array")
-                else "rendered" if topic.endswith("/audio/headphones/stereo")
-                else None
-            )
+            audio_role = "raw" if topic.endswith("/audio/raw_array") else "rendered" if topic.endswith("/audio/headphones/stereo") else None
             if audio_role is not None:
                 if str(ros_msg.encoding) != "32FC1" or not bool(ros_msg.interleaved):
-                    raise ValueError(
-                        f"{topic}: expected interleaved 32FC1 AudioFrame, got "
-                        f"encoding={ros_msg.encoding!r} interleaved={ros_msg.interleaved!r}"
-                    )
+                    raise ValueError(f"{topic}: expected interleaved 32FC1 AudioFrame, got encoding={ros_msg.encoding!r} interleaved={ros_msg.interleaved!r}")
                 channels = int(ros_msg.channel_count)
                 frames = int(ros_msg.frame_count)
                 values = np.asarray(ros_msg.data, dtype="<f4")
                 if channels <= 0 or frames <= 0 or values.size != channels * frames:
                     raise ValueError(f"{topic}: malformed AudioFrame dimensions")
-                audio[audio_role].append(AudioBlock(
-                    topic=topic,
-                    timestamp_ns=stamp_ns(ros_msg.header.stamp),
-                    first_sample_index=0,
-                    sample_rate=int(ros_msg.sample_rate),
-                    channels=channels,
-                    encoding=PCM_F32LE,
-                    stream_id=topic,
-                    channel_names=tuple(str(item) for item in ros_msg.channel_names),
-                    microphone_frame=str(ros_msg.header.frame_id),
-                    payload=values.tobytes(),
-                    microphone_positions=tuple(
-                        (float(point.x), float(point.y), float(point.z))
-                        for point in ros_msg.microphone_positions
-                    ),
-                    microphone_yaw_rad=tuple(float(value) for value in ros_msg.microphone_yaw_rad),
-                ))
+                audio[audio_role].append(
+                    AudioBlock(
+                        topic=topic,
+                        timestamp_ns=stamp_ns(ros_msg.header.stamp),
+                        first_sample_index=0,
+                        sample_rate=int(ros_msg.sample_rate),
+                        channels=channels,
+                        encoding=PCM_F32LE,
+                        stream_id=topic,
+                        channel_names=tuple(str(item) for item in ros_msg.channel_names),
+                        frame_ids=tuple(str(item) for item in ros_msg.frame_ids),
+                        microphone_frame=str(ros_msg.header.frame_id),
+                        payload=values.tobytes(),
+                        microphone_positions=tuple((float(point.x), float(point.y), float(point.z)) for point in ros_msg.microphone_positions),
+                        microphone_yaw_rad=tuple(float(value) for value in ros_msg.microphone_yaw_rad),
+                    )
+                )
             elif topic == "/clock":
                 clocks.append(stamp_ns(ros_msg.clock))
             elif topic.endswith("/door_mask") or (topic.endswith("/map") and "/costmap" not in topic):
                 role = "door_mask" if topic.endswith("/door_mask") else "map"
                 info = ros_msg.info
                 map_data = np.asarray(ros_msg.data, dtype=np.int8).reshape((int(info.height), int(info.width)))
-                maps[role].append({
-                    "timestamp_ns": _header_time_or_log_time(ros_msg, message.log_time),
-                    "topic": topic,
-                    "frame_id": str(ros_msg.header.frame_id),
-                    "resolution": float(info.resolution),
-                    "width": int(info.width),
-                    "height": int(info.height),
-                    "origin_x": float(info.origin.position.x),
-                    "origin_y": float(info.origin.position.y),
-                    "origin_z": float(info.origin.position.z),
-                    "origin_yaw": quaternion_yaw(info.origin.orientation),
-                    "data": map_data,
-                })
+                maps[role].append(
+                    {
+                        "timestamp_ns": _header_time_or_log_time(ros_msg, message.log_time),
+                        "topic": topic,
+                        "frame_id": str(ros_msg.header.frame_id),
+                        "resolution": float(info.resolution),
+                        "width": int(info.width),
+                        "height": int(info.height),
+                        "origin_x": float(info.origin.position.x),
+                        "origin_y": float(info.origin.position.y),
+                        "origin_z": float(info.origin.position.z),
+                        "origin_yaw": quaternion_yaw(info.origin.orientation),
+                        "data": map_data,
+                    }
+                )
             elif topic in ("/tf", "/tf_static"):
                 for transform in ros_msg.transforms:
                     transform_time = stamp_ns(transform.header.stamp)
@@ -293,51 +419,78 @@ def read_mcap(path: Path) -> dict[str, Any]:
                     parent = str(transform.header.frame_id).strip("/")
                     child = str(transform.child_frame_id).strip("/")
                     value = transform.transform
-                    transforms.setdefault((parent, child), []).append({
-                        "timestamp_ns": transform_time,
-                        "x": float(value.translation.x),
-                        "y": float(value.translation.y),
-                        "z": float(value.translation.z),
-                        "yaw": quaternion_yaw(value.rotation),
-                        "static": topic == "/tf_static",
-                    })
+                    transforms.setdefault((parent, child), []).append(
+                        {
+                            "timestamp_ns": transform_time,
+                            "x": float(value.translation.x),
+                            "y": float(value.translation.y),
+                            "z": float(value.translation.z),
+                            "yaw": quaternion_yaw(value.rotation),
+                            "static": topic == "/tf_static",
+                        }
+                    )
             elif topic.endswith("/odom"):
                 ts = _header_time_or_log_time(ros_msg, message.log_time)
                 pose, twist = ros_msg.pose.pose, ros_msg.twist.twist
-                odom.setdefault(topic, []).append({
-                    "timestamp_ns": ts,
-                    "x": float(pose.position.x), "y": float(pose.position.y),
-                    "z": float(pose.position.z), "yaw": quaternion_yaw(pose.orientation),
-                    "vx": float(twist.linear.x), "vy": float(twist.linear.y),
-                    "vz": float(twist.linear.z), "yaw_rate": float(twist.angular.z),
-                    "frame_id": str(ros_msg.header.frame_id),
-                    "child_frame_id": str(ros_msg.child_frame_id),
-                    "topic": topic,
-                })
+                odom.setdefault(topic, []).append(
+                    {
+                        "timestamp_ns": ts,
+                        "x": float(pose.position.x),
+                        "y": float(pose.position.y),
+                        "z": float(pose.position.z),
+                        "yaw": quaternion_yaw(pose.orientation),
+                        "vx": float(twist.linear.x),
+                        "vy": float(twist.linear.y),
+                        "vz": float(twist.linear.z),
+                        "yaw_rate": float(twist.angular.z),
+                        "frame_id": str(ros_msg.header.frame_id),
+                        "child_frame_id": str(ros_msg.child_frame_id),
+                        "topic": topic,
+                    }
+                )
             elif topic.endswith("/arena_peds") and hasattr(ros_msg, "pedestrians"):
                 ts = _header_time_or_log_time(ros_msg, message.log_time)
                 for ped in ros_msg.pedestrians:
                     key = str(ped.name) or str(ped.id)
-                    pedestrians.setdefault(key, []).append({
-                        "timestamp_ns": ts,
-                        "pedestrian_id": int(ped.id), "pedestrian_name": str(ped.name),
-                        "x": float(ped.pose.position.x), "y": float(ped.pose.position.y),
-                        "z": float(ped.pose.position.z), "yaw": quaternion_yaw(ped.pose.orientation),
-                        "vx": float(ped.twist.linear.x), "vy": float(ped.twist.linear.y),
-                        "vz": float(ped.twist.linear.z),
-                        "animation_state": int(ped.animation_state),
-                        "model_uri": str(ped.model_uri), "topic": topic,
-                        "frame_id": str(ros_msg.header.frame_id),
-                    })
+                    arena_pedestrians.setdefault(key, []).append(
+                        {
+                            "timestamp_ns": ts,
+                            "pedestrian_id": int(ped.id),
+                            "pedestrian_name": str(ped.name),
+                            "x": float(ped.pose.position.x),
+                            "y": float(ped.pose.position.y),
+                            "z": float(ped.pose.position.z),
+                            "yaw": quaternion_yaw(ped.pose.orientation),
+                            "vx": float(ped.twist.linear.x),
+                            "vy": float(ped.twist.linear.y),
+                            "vz": float(ped.twist.linear.z),
+                            "animation_state": int(ped.animation_state),
+                            "model_uri": str(ped.model_uri),
+                            "radius": None,
+                            "desired_velocity": None,
+                            "agent_type": "",
+                            "policy": "",
+                            "state_source": "arena_peds",
+                            "state_source_topic": topic,
+                            "topic": topic,
+                            "frame_id": str(ros_msg.header.frame_id),
+                        }
+                    )
+            elif topic.endswith("/agent_states") and hasattr(ros_msg, "agents"):
+                decoded = _agent_states_pedestrians(ros_msg, topic, message.log_time)
+                for key, rows in decoded.items():
+                    agent_state_pedestrians.setdefault(key, []).extend(rows)
             elif topic.endswith("/state/episode"):
-                episode_events.append({
-                    "timestamp_ns": int(message.log_time),
-                    "start_time_ns": stamp_ns(ros_msg.start_time),
-                    "episode_id": str(ros_msg.episode_id),
-                    "outcome_state": int(ros_msg.outcome_state),
-                    "outcome_info": str(ros_msg.outcome_info),
-                    "world": str(ros_msg.world),
-                })
+                episode_events.append(
+                    {
+                        "timestamp_ns": int(message.log_time),
+                        "start_time_ns": stamp_ns(ros_msg.start_time),
+                        "episode_id": str(ros_msg.episode_id),
+                        "outcome_state": int(ros_msg.outcome_state),
+                        "outcome_info": str(ros_msg.outcome_info),
+                        "world": str(ros_msg.world),
+                    }
+                )
     # AudioFrame does not carry a sample counter. Its publisher guarantees that
     # header.stamp is the first sample's simulation time, so derive the stable
     # frame index from that clock. Timestamp gaps therefore become sample gaps.
@@ -355,9 +508,19 @@ def read_mcap(path: Path) -> dict[str, Any]:
             for chunk in ordered
         ]
 
+    # arena_peds supplies names/model/animation while AgentStates supplies the
+    # physical radius, configured desired speed, agent type and policy.  Their
+    # IDs are shared by the HumanSim bridge, so retain one trajectory and merge
+    # the complementary metadata instead of discarding either stream.
+    pedestrians = _merge_pedestrian_sources(arena_pedestrians, agent_state_pedestrians)
     return {
-        "audio": audio, "odom": odom, "pedestrians": pedestrians,
-        "clock": clocks, "episodes": episode_events, "topic_types": topic_types,
+        "audio": audio,
+        "odom": odom,
+        "pedestrians": pedestrians,
+        "pedestrian_state_source": "arena_peds+agent_states" if arena_pedestrians and agent_state_pedestrians else ("arena_peds" if arena_pedestrians else ("agent_states" if agent_state_pedestrians else None)),
+        "clock": clocks,
+        "episodes": episode_events,
+        "topic_types": topic_types,
         "maps": maps,
         "transforms": transforms,
     }
@@ -427,15 +590,9 @@ def transform_robot_trajectory(
     if _same_frame(source_frame, target_frame):
         return rows, {"source_frame": source_frame, "target_frame": target_frame, "transform": "identity"}
 
-    candidates = [
-        (key, values) for key, values in transforms.items()
-        if _same_frame(key[0], target_frame) and _same_frame(key[1], source_frame)
-    ]
+    candidates = [(key, values) for key, values in transforms.items() if _same_frame(key[0], target_frame) and _same_frame(key[1], source_frame)]
     if len(candidates) != 1:
-        raise ValueError(
-            f"need exactly one TF transform {target_frame!r}->{source_frame!r} to align robot and pedestrians; "
-            f"found {[key for key, _ in candidates]}"
-        )
+        raise ValueError(f"need exactly one TF transform {target_frame!r}->{source_frame!r} to align robot and pedestrians; found {[key for key, _ in candidates]}")
     (parent, child), tf_rows = candidates[0]
     tf_rows = sorted(tf_rows, key=lambda row: row["timestamp_ns"])
     is_static = all(row["static"] for row in tf_rows)
@@ -445,17 +602,19 @@ def transform_robot_trajectory(
         if transform is None:
             continue
         cosine, sine = math.cos(transform["yaw"]), math.sin(transform["yaw"])
-        aligned.append({
-            **row,
-            "x": transform["x"] + cosine * row["x"] - sine * row["y"],
-            "y": transform["y"] + sine * row["x"] + cosine * row["y"],
-            "z": transform["z"] + row["z"],
-            "yaw": math.atan2(math.sin(transform["yaw"] + row["yaw"]), math.cos(transform["yaw"] + row["yaw"])),
-            "vx": cosine * row["vx"] - sine * row["vy"],
-            "vy": sine * row["vx"] + cosine * row["vy"],
-            "source_frame_id": row["frame_id"],
-            "frame_id": target_frame,
-        })
+        aligned.append(
+            {
+                **row,
+                "x": transform["x"] + cosine * row["x"] - sine * row["y"],
+                "y": transform["y"] + sine * row["x"] + cosine * row["y"],
+                "z": transform["z"] + row["z"],
+                "yaw": math.atan2(math.sin(transform["yaw"] + row["yaw"]), math.cos(transform["yaw"] + row["yaw"])),
+                "vx": cosine * row["vx"] - sine * row["vy"],
+                "vy": sine * row["vx"] + cosine * row["vy"],
+                "source_frame_id": row["frame_id"],
+                "frame_id": target_frame,
+            }
+        )
     if not aligned:
         raise ValueError(f"TF {parent}->{child} has no samples close enough to robot odometry")
     return aligned, {
@@ -468,6 +627,8 @@ def transform_robot_trajectory(
 
 def _audio_features(audio: np.ndarray, start: int, stop: int, prefix: str) -> dict[str, float]:
     window = audio[start:stop]
+    if window.shape[0] == 0:
+        raise ValueError(f"{prefix} audio label window is empty")
     result: dict[str, float] = {}
     for channel in range(window.shape[1]):
         values = window[:, channel]
@@ -476,9 +637,7 @@ def _audio_features(audio: np.ndarray, start: int, stop: int, prefix: str) -> di
     return result
 
 
-def occupancy_ray_labels(
-    snapshot: dict[str, Any], start_xy: tuple[float, float], end_xy: tuple[float, float]
-) -> dict[str, Any]:
+def occupancy_ray_labels(snapshot: dict[str, Any], start_xy: tuple[float, float], end_xy: tuple[float, float]) -> dict[str, Any]:
     """Trace a world-space source/listener ray through the recorded OccupancyGrid."""
     resolution = float(snapshot["resolution"])
     if resolution <= 0:
@@ -525,8 +684,10 @@ def build_labels(
     *,
     frame_ms: float,
     max_pose_gap_ms: float,
+    emit_robot_only: bool = False,
     context: dict[str, Any] | None = None,
     occupancy_map: dict[str, Any] | None = None,
+    door_mask: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rate = int(rendered_summary["sample_rate"])
     hop = max(1, round(rate * frame_ms / 1000.0))
@@ -536,6 +697,7 @@ def build_labels(
     for start in range(0, rendered.shape[0], hop):
         stop = min(start + hop, rendered.shape[0])
         timestamp_ns = origin_ns + round(start * 1_000_000_000 / rate)
+        window_end_ns = origin_ns + round(stop * 1_000_000_000 / rate)
         robot = _interp(robot_rows, timestamp_ns, max_gap_ns)
         if robot is None:
             continue
@@ -547,20 +709,44 @@ def build_labels(
             "recording_sample_offset": start,
             "audio_sample_index": int(rendered_summary["first_sample_index"]) + start,
             "audio_frame_count": stop - start,
+            "audio_window_length_ns": window_end_ns - timestamp_ns,
             "audio_sample_rate": rate,
             "microphone_frame": rendered_summary.get("microphone_frame"),
             "raw_channel_names": raw_summary.get("channel_names"),
+            "raw_frame_ids": raw_summary.get("frame_ids"),
+            "raw_microphone_frame": raw_summary.get("microphone_frame"),
             "raw_microphone_positions": raw_summary.get("microphone_positions"),
             "raw_microphone_yaw_rad": raw_summary.get("microphone_yaw_rad"),
-            "robot_x": robot["x"], "robot_y": robot["y"], "robot_z": robot["z"],
-            "robot_yaw": robot["yaw"], "robot_vx": robot["vx"], "robot_vy": robot["vy"],
+            "robot_x": robot["x"],
+            "robot_y": robot["y"],
+            "robot_z": robot["z"],
+            "robot_yaw": robot["yaw"],
+            "robot_vx": robot["vx"],
+            "robot_vy": robot["vy"],
+            "robot_vz": robot.get("vz", 0.0),
+            "robot_linear_speed_mps": math.sqrt(robot["vx"] ** 2 + robot["vy"] ** 2 + robot.get("vz", 0.0) ** 2),
             "robot_yaw_rate": robot["yaw_rate"],
             **_audio_features(rendered, start, stop, "rendered"),
         }
-        if raw_summary["sample_rate"] == rate:
-            raw_offset = round((timestamp_ns - raw_summary["first_timestamp_ns"]) * rate / 1_000_000_000)
-            if 0 <= raw_offset < raw.shape[0]:
-                common.update(_audio_features(raw, raw_offset, min(raw_offset + hop, raw.shape[0]), "raw"))
+        raw_rate = int(raw_summary["sample_rate"])
+        raw_offset = round((timestamp_ns - raw_summary["first_timestamp_ns"]) * raw_rate / 1_000_000_000)
+        raw_stop = round((window_end_ns - raw_summary["first_timestamp_ns"]) * raw_rate / 1_000_000_000)
+        if 0 <= raw_offset < raw.shape[0] and raw_stop > raw_offset:
+            raw_stop = min(raw_stop, raw.shape[0])
+            common.update(
+                {
+                    "raw_recording_sample_offset": raw_offset,
+                    "raw_audio_sample_index": int(raw_summary["first_sample_index"]) + raw_offset,
+                    "raw_audio_frame_count": raw_stop - raw_offset,
+                    "raw_audio_sample_rate": raw_rate,
+                    **_audio_features(raw, raw_offset, raw_stop, "raw"),
+                }
+            )
+        else:
+            raise ValueError(f"raw audio does not cover rendered label window {timestamp_ns}:{window_end_ns}")
+        if not pedestrians and emit_robot_only:
+            rows.append({**common, "pedestrian_present": False})
+            continue
         for ped_key, ped_rows in pedestrians.items():
             ped = _interp(ped_rows, timestamp_ns, max_gap_ns)
             if ped is None:
@@ -572,24 +758,44 @@ def build_labels(
             bearing = math.atan2(math.sin(math.atan2(dy, dx) - robot["yaw"]), math.cos(math.atan2(dy, dx) - robot["yaw"]))
             distance = math.hypot(dx, dy)
             radial_velocity = ((ped["vx"] - robot["vx"]) * dx + (ped["vy"] - robot["vy"]) * dy) / distance if distance else 0.0
-            ray_labels = occupancy_ray_labels(
-                occupancy_map, (robot["x"], robot["y"]), (ped["x"], ped["y"])
-            ) if occupancy_map is not None else {}
-            rows.append({
-                **common,
-                "pedestrian_key": ped_key,
-                "pedestrian_id": ped["pedestrian_id"], "pedestrian_name": ped["pedestrian_name"],
-                "pedestrian_x": ped["x"], "pedestrian_y": ped["y"], "pedestrian_z": ped["z"],
-                "pedestrian_yaw": ped["yaw"], "pedestrian_vx": ped["vx"], "pedestrian_vy": ped["vy"],
-                "pedestrian_model_uri": ped["model_uri"],
-                "relative_x_world": dx, "relative_y_world": dy,
-                "relative_z_world": dz,
-                "relative_x_robot": relative_x_robot, "relative_y_robot": relative_y_robot,
-                "range_m": distance, "range_3d_m": math.sqrt(dx * dx + dy * dy + dz * dz),
-                "bearing_robot_rad": bearing, "elevation_robot_rad": math.atan2(dz, distance),
-                "radial_velocity_mps": radial_velocity,
-                **ray_labels,
-            })
+            ray_labels = occupancy_ray_labels(occupancy_map, (robot["x"], robot["y"]), (ped["x"], ped["y"])) if occupancy_map is not None else {}
+            door_ray_labels = {f"door_mask_{key}": value for key, value in occupancy_ray_labels(door_mask, (robot["x"], robot["y"]), (ped["x"], ped["y"])).items()} if door_mask is not None else {}
+            rows.append(
+                {
+                    **common,
+                    "pedestrian_key": ped_key,
+                    "pedestrian_id": ped["pedestrian_id"],
+                    "pedestrian_name": ped["pedestrian_name"],
+                    "pedestrian_x": ped["x"],
+                    "pedestrian_y": ped["y"],
+                    "pedestrian_z": ped["z"],
+                    "pedestrian_yaw": ped["yaw"],
+                    "pedestrian_vx": ped["vx"],
+                    "pedestrian_vy": ped["vy"],
+                    "pedestrian_vz": ped.get("vz", 0.0),
+                    "pedestrian_speed_mps": math.sqrt(ped["vx"] ** 2 + ped["vy"] ** 2 + ped.get("vz", 0.0) ** 2),
+                    "pedestrian_model_uri": ped["model_uri"],
+                    "pedestrian_radius_m": ped.get("radius"),
+                    "pedestrian_desired_velocity_mps": ped.get("desired_velocity"),
+                    "pedestrian_agent_type": ped.get("agent_type", ""),
+                    "pedestrian_policy": ped.get("policy", ""),
+                    "pedestrian_state_source": ped.get("state_source", "arena_peds"),
+                    "pedestrian_state_source_topic": ped.get("state_source_topic", ped.get("topic")),
+                    "relative_x_world": dx,
+                    "relative_y_world": dy,
+                    "relative_z_world": dz,
+                    "relative_x_robot": relative_x_robot,
+                    "relative_y_robot": relative_y_robot,
+                    "relative_z_robot": dz,
+                    "range_m": distance,
+                    "range_3d_m": math.sqrt(dx * dx + dy * dy + dz * dz),
+                    "bearing_robot_rad": bearing,
+                    "elevation_robot_rad": math.atan2(dz, distance),
+                    "radial_velocity_mps": radial_velocity,
+                    **ray_labels,
+                    **door_ray_labels,
+                }
+            )
     if not rows:
         raise ValueError("no labels could be aligned; check odometry/pedestrian topics and --max-pose-gap-ms")
     return rows
@@ -611,11 +817,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({
-                key: json.dumps(value, separators=(",", ":"))
-                if isinstance(value, (dict, list, tuple)) else value
-                for key, value in row.items()
-            })
+            writer.writerow({key: json.dumps(value, separators=(",", ":")) if isinstance(value, (dict, list, tuple)) else value for key, value in row.items()})
 
 
 def write_flac(path: Path, audio: np.ndarray, sample_rate: int) -> None:
@@ -623,9 +825,24 @@ def write_flac(path: Path, audio: np.ndarray, sample_rate: int) -> None:
     if not ffmpeg:
         raise RuntimeError("ffmpeg is required for FLAC export (Ubuntu: sudo apt install ffmpeg)")
     command = [
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-        "-f", "f32le", "-ar", str(sample_rate), "-ac", str(audio.shape[1]), "-i", "pipe:0",
-        "-c:a", "flac", "-compression_level", "8", str(path),
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "f32le",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        str(audio.shape[1]),
+        "-i",
+        "pipe:0",
+        "-c:a",
+        "flac",
+        "-compression_level",
+        "8",
+        str(path),
     ]
     subprocess.run(command, input=np.asarray(audio, dtype="<f4").tobytes(), check=True)
 
@@ -641,9 +858,7 @@ def select_map_snapshot(rows: list[dict[str, Any]], timestamp_ns: int) -> dict[s
 def write_map_snapshot(path: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
     data = np.asarray(snapshot["data"], dtype=np.int8)
     metadata = {key: value for key, value in snapshot.items() if key != "data"}
-    digest = hashlib.sha256(
-        json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8") + data.tobytes()
-    ).hexdigest()
+    digest = hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8") + data.tobytes()).hexdigest()
     np.savez_compressed(
         path,
         occupancy=data,
@@ -659,16 +874,51 @@ def write_map_snapshot(path: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
     return {**metadata, "sha256": digest, "file": path.name}
 
 
+def audio_statistics(audio: np.ndarray, channel_names: Sequence[str]) -> dict[str, Any]:
+    per_channel = []
+    for index in range(audio.shape[1]):
+        values = audio[:, index]
+        per_channel.append(
+            {
+                "index": index,
+                "name": channel_names[index] if index < len(channel_names) else f"ch{index}",
+                "rms": float(np.sqrt(np.mean(values * values))),
+                "peak": float(np.max(np.abs(values))),
+                "clipped_fraction": float(np.mean(np.abs(values) >= 0.999)),
+            }
+        )
+    return {
+        "rms": float(np.sqrt(np.mean(audio * audio))),
+        "peak": float(np.max(np.abs(audio))),
+        "clipped_fraction": float(np.mean(np.abs(audio) >= 0.999)),
+        "per_channel": per_channel,
+    }
+
+
+def flatten_transforms(transforms: dict[tuple[str, str], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    return [{"parent_frame": parent, "child_frame": child, **row} for (parent, child), rows in transforms.items() for row in rows]
+
+
+def load_episode_metadata(mcap_path: Path, run_dir: Path) -> tuple[dict[str, Any], str | None]:
+    candidates = sorted(mcap_path.parent.glob("episode_*.yaml"))
+    if not candidates:
+        candidates = sorted(run_dir.glob("episode_*/episode_*.yaml"))
+    if len(candidates) > 1:
+        raise ValueError(f"multiple episode metadata files found for {mcap_path}")
+    if not candidates:
+        return {}, None
+    value = yaml.safe_load(candidates[0].read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"episode metadata is not a mapping: {candidates[0]}")
+    return value, str(candidates[0])
+
+
 def resolve_mcap(path: Path) -> tuple[Path, Path]:
     path = path.resolve()
     if path.is_file():
         run_dir = path.parent.parent if path.parent.name == "recording" else path.parent
         return path, run_dir
-    candidates = (
-        sorted(path.glob("recording/*.mcap"))
-        + sorted(path.glob("episode_*/*.mcap"))
-        + sorted(path.glob("*.mcap"))
-    )
+    candidates = sorted(path.glob("recording/*.mcap")) + sorted(path.glob("episode_*/*.mcap")) + sorted(path.glob("*.mcap"))
     if len(candidates) != 1:
         raise ValueError(f"expected exactly one MCAP below {path}, found {len(candidates)}")
     run_dir = path.parent if path.name == "recording" else path
@@ -684,10 +934,15 @@ def export(args: argparse.Namespace) -> Path:
     output.mkdir(parents=True, exist_ok=True)
 
     data = read_mcap(mcap_path)
+    episode_metadata, episode_metadata_file = load_episode_metadata(mcap_path, run_dir)
     running_events = [event for event in data["episodes"] if event["outcome_state"] == 1]
     if not running_events:
         raise ValueError("recording has no RUNNING EpisodeRecord; refusing to mix simulator startup audio into the episode")
     episode_event = running_events[0]
+    terminal_events = [event for event in data["episodes"] if event["episode_id"] == episode_event["episode_id"] and event["outcome_state"] in TERMINAL_OUTCOMES]
+    terminal_event = terminal_events[-1] if terminal_events else None
+    if terminal_event is None and not args.allow_nonterminal_episode:
+        raise ValueError("recording has no terminal EpisodeRecord; the episode action must be cleanly completed or cancelled")
     episode_start_ns = episode_event["start_time_ns"] or episode_event["timestamp_ns"]
     episode_end_ns = None if args.expected_duration is None else episode_start_ns + round(args.expected_duration * 1_000_000_000)
     raw_chunks = clip_audio_chunks(data["audio"]["raw"], episode_start_ns, episode_end_ns)
@@ -702,16 +957,20 @@ def export(args: argparse.Namespace) -> Path:
         for summary in (raw_summary, rendered_summary):
             recorded_duration = summary["recorded_frames"] / summary["sample_rate"]
             if recorded_duration + args.duration_tolerance < args.expected_duration:
-                raise ValueError(
-                    f"{summary['topic']} has only {recorded_duration:.3f}s of samples; "
-                    f"expected {args.expected_duration:.3f}s"
-                )
+                raise ValueError(f"{summary['topic']} has only {recorded_duration:.3f}s of samples; expected {args.expected_duration:.3f}s")
     if rendered.shape[1] != 2:
         raise ValueError(f"headphones/stereo must be stereo, got {rendered.shape[1]} channels")
     if rendered_summary["channel_names"] != ["left", "right"]:
         raise ValueError("headphones/stereo channel_names must be [left, right]")
+    if raw.shape[1] != 4:
+        raise ValueError(f"raw_array must contain exactly four microphone channels, got {raw.shape[1]}")
     if len(raw_summary["channel_names"]) != raw_summary["channels"]:
         raise ValueError("raw_array must provide one channel name per channel")
+    for field in ("frame_ids", "microphone_positions", "microphone_yaw_rad"):
+        if len(raw_summary[field]) != raw_summary["channels"]:
+            raise ValueError(f"raw_array must provide one {field} value per microphone channel")
+    if not str(raw_summary["microphone_frame"]).strip():
+        raise ValueError("raw_array microphone frame is empty")
     if raw_summary["max_timestamp_error_ns"] > round(1_000_000_000 / raw_summary["sample_rate"]):
         raise ValueError("raw_array timestamps are not sample-contiguous")
     if rendered_summary["max_timestamp_error_ns"] > round(1_000_000_000 / rendered_summary["sample_rate"]):
@@ -724,23 +983,18 @@ def export(args: argparse.Namespace) -> Path:
         r"(?P<environment>/.+)/(?P<robot>[^/]+)/audio/headphones/stereo",
         rendered_summary["topic"],
     )
-    if (
-        raw_match is None
-        or rendered_match is None
-        or raw_match.groupdict() != rendered_match.groupdict()
-    ):
+    if raw_match is None or rendered_match is None or raw_match.groupdict() != rendered_match.groupdict():
         raise ValueError("raw and rendered audio must share one robot and environment namespace")
     raw_namespace = raw_match.group("environment")
     robot_name = raw_match.group("robot")
-    rendered_rms = float(np.sqrt(np.mean(rendered * rendered)))
-    rendered_clipped_fraction = float(np.mean(np.abs(rendered) >= 0.999))
+    raw_statistics = audio_statistics(raw, raw_summary["channel_names"])
+    rendered_statistics = audio_statistics(rendered, rendered_summary["channel_names"])
+    rendered_rms = rendered_statistics["rms"]
+    rendered_clipped_fraction = rendered_statistics["clipped_fraction"]
     if rendered_rms <= args.silence_rms_threshold:
         raise ValueError(f"headphones/stereo is silent (RMS {rendered_rms:g})")
     if rendered_clipped_fraction > args.clipping_fraction_threshold:
-        raise ValueError(
-            f"headphones/stereo clipping fraction {rendered_clipped_fraction:g} exceeds "
-            f"{args.clipping_fraction_threshold:g}"
-        )
+        raise ValueError(f"headphones/stereo clipping fraction {rendered_clipped_fraction:g} exceeds {args.clipping_fraction_threshold:g}")
 
     odom_topic, robot_rows = _choose_odom(data["odom"], args.robot_odom_topic)
     map_snapshot = select_map_snapshot(data["maps"]["map"], episode_start_ns)
@@ -749,21 +1003,16 @@ def export(args: argparse.Namespace) -> Path:
     if map_snapshot["data"].size != map_snapshot["width"] * map_snapshot["height"]:
         raise ValueError("recorded occupancy map dimensions do not match its data")
     if map_snapshot["topic"] != f"{raw_namespace}/map":
-        raise ValueError(
-            f"recorded map {map_snapshot['topic']!r} does not belong to audio environment {raw_namespace!r}"
-        )
+        raise ValueError(f"recorded map {map_snapshot['topic']!r} does not belong to audio environment {raw_namespace!r}")
     map_frame = str(map_snapshot["frame_id"]).strip("/")
     if not map_frame:
         raise ValueError("recorded occupancy map has an empty frame_id")
-    pedestrian_frames = {
-        str(row["frame_id"]).strip("/")
-        for rows in data["pedestrians"].values()
-        for row in rows
-    }
-    if not pedestrian_frames or any(not frame or not _same_frame(frame, map_frame) for frame in pedestrian_frames):
-        raise ValueError(
-            f"pedestrian poses must use occupancy-map frame {map_frame!r}; found {sorted(pedestrian_frames)}"
-        )
+    pedestrian_frames = {str(row["frame_id"]).strip("/") for rows in data["pedestrians"].values() for row in rows}
+    if not pedestrian_frames:
+        if not args.allow_missing_pedestrians:
+            raise ValueError("recording has no pedestrian pose samples; it cannot produce source-position labels (use --allow-missing-pedestrians only for audio/robot-only export)")
+    elif any(not frame or not _same_frame(frame, map_frame) for frame in pedestrian_frames):
+        raise ValueError(f"pedestrian poses must use occupancy-map frame {map_frame!r}; found {sorted(pedestrian_frames)}")
     robot_rows, robot_frame_transform = transform_robot_trajectory(
         robot_rows,
         data["transforms"],
@@ -772,22 +1021,48 @@ def export(args: argparse.Namespace) -> Path:
     )
     artifact_prefix = args.artifact_prefix or (indexed_run.group("index") if indexed_run else None)
     prefix = f"{artifact_prefix}_" if artifact_prefix else ""
+    scenario_source = run_dir / "scenario.yaml"
+    if args.scenario_name and not scenario_source.is_file():
+        raise ValueError(f"copied scenario.yaml is missing from run directory: {scenario_source}")
+    scenario_sha256 = hashlib.sha256(scenario_source.read_bytes()).hexdigest() if scenario_source.is_file() else None
+    scenario_target = output / "scenario.yaml"
+    if scenario_source.is_file() and scenario_source.resolve() != scenario_target.resolve():
+        shutil.copy2(scenario_source, scenario_target)
+    outcome_state = terminal_event["outcome_state"] if terminal_event else episode_metadata.get("outcome_state")
+    outcome_info = terminal_event["outcome_info"] if terminal_event else episode_metadata.get("outcome_info", "")
     context = {
         "world": args.world_name or episode_event["world"] or run_dir.parent.name,
         "scenario": args.scenario_name or (indexed_run.group("scenario") if indexed_run else run_dir.name),
-        "execution_index": (
-            args.execution_index
-            if args.execution_index is not None
-            else (int(indexed_run.group("index")) if indexed_run else None)
-        ),
+        "execution_index": (args.execution_index if args.execution_index is not None else (int(indexed_run.group("index")) if indexed_run else None)),
         "recording_file": f"{prefix}recording.flac" if prefix else "rendered.flac",
         "scenario_config_file": "scenario.yaml",
+        "scenario_config_sha256": scenario_sha256,
         "episode_id": episode_event["episode_id"],
+        "episode_outcome_state": outcome_state,
+        "episode_outcome": OUTCOME_LABELS.get(outcome_state, str(outcome_state) if outcome_state is not None else None),
+        "episode_outcome_info": outcome_info,
     }
+    door_snapshot = select_map_snapshot(data["maps"]["door_mask"], episode_start_ns)
+    if door_snapshot is not None:
+        if door_snapshot["data"].size != door_snapshot["width"] * door_snapshot["height"]:
+            raise ValueError("recorded door-mask dimensions do not match its data")
+        if door_snapshot["topic"] != f"{raw_namespace}/door_mask":
+            raise ValueError("recorded door mask does not belong to the audio environment")
+        if not _same_frame(str(door_snapshot["frame_id"]), map_frame):
+            raise ValueError("door mask and occupancy map use different coordinate frames")
     labels = build_labels(
-        rendered, rendered_summary, raw, raw_summary, robot_rows, data["pedestrians"],
-        frame_ms=args.label_frame_ms, max_pose_gap_ms=args.max_pose_gap_ms,
-        context=context, occupancy_map=map_snapshot,
+        rendered,
+        rendered_summary,
+        raw,
+        raw_summary,
+        robot_rows,
+        data["pedestrians"],
+        frame_ms=args.label_frame_ms,
+        max_pose_gap_ms=args.max_pose_gap_ms,
+        emit_robot_only=args.allow_missing_pedestrians,
+        context=context,
+        occupancy_map=map_snapshot,
+        door_mask=door_snapshot,
     )
     rendered_audio_name = f"{prefix}recording.flac" if prefix else "rendered.flac"
     raw_audio_name = f"{prefix}raw.flac" if prefix else "raw.flac"
@@ -797,6 +1072,7 @@ def export(args: argparse.Namespace) -> Path:
     pedestrian_positions_name = f"{prefix}pedestrian_positions.parquet"
     frame_labels_name = f"{prefix}frame_labels.parquet"
     episode_events_name = f"{prefix}episode_events.parquet"
+    tf_transforms_name = f"{prefix}tf_transforms.parquet"
     occupancy_map_name = f"{prefix}occupancy_map.npz"
     door_mask_name = f"{prefix}door_mask.npz"
     validation_name = f"{prefix}validation.json"
@@ -811,16 +1087,30 @@ def export(args: argparse.Namespace) -> Path:
     write_parquet(output / pedestrian_positions_name, [row for rows in data["pedestrians"].values() for row in rows])
     write_parquet(output / frame_labels_name, labels)
     write_parquet(output / episode_events_name, data["episodes"])
+    write_parquet(output / tf_transforms_name, flatten_transforms(data["transforms"]))
     map_metadata = write_map_snapshot(output / occupancy_map_name, map_snapshot)
-    door_snapshot = select_map_snapshot(data["maps"]["door_mask"], episode_start_ns)
     door_metadata = write_map_snapshot(output / door_mask_name, door_snapshot) if door_snapshot is not None else None
 
     validation = {
         "valid": True,
         "timestamp_semantics": "AudioFrame.header.stamp is simulation time of first sample frame",
         "raw_lossless_location": str(mcap_path),
+        "scenario_config_file": "scenario.yaml" if scenario_source.is_file() else None,
+        "scenario_config_sha256": scenario_sha256,
+        "episode_metadata_file": episode_metadata_file,
+        "episode_id": episode_event["episode_id"],
+        "episode_outcome_state": outcome_state,
+        "episode_outcome": OUTCOME_LABELS.get(outcome_state, str(outcome_state) if outcome_state is not None else None),
+        "episode_outcome_info": outcome_info,
+        "terminal_episode_recorded": terminal_event is not None,
+        "ros_distribution": episode_metadata.get("ros_distro"),
+        "arena_git_revision": episode_metadata.get("arena_git_sha"),
+        "arena_git_dirty": episode_metadata.get("arena_git_dirty"),
+        "recorded_topics": episode_metadata.get("recorded_topics") or sorted(data["topic_types"]),
         "raw": raw_summary,
         "rendered": rendered_summary,
+        "raw_audio_statistics": raw_statistics,
+        "rendered_audio_statistics": rendered_statistics,
         "robot_odom_topic": odom_topic,
         "robot_frame_transform": robot_frame_transform,
         "environment_namespace": raw_namespace,
@@ -828,9 +1118,11 @@ def export(args: argparse.Namespace) -> Path:
         "occupancy_map": map_metadata,
         "door_mask": door_metadata,
         "pedestrian_count": len(data["pedestrians"]),
+        "pedestrian_state_source": data["pedestrian_state_source"],
+        "has_pedestrian_labels": bool(data["pedestrians"]),
         "label_rows": len(labels),
         "rendered_rms": rendered_rms,
-        "rendered_peak": float(np.max(np.abs(rendered))),
+        "rendered_peak": rendered_statistics["peak"],
         "rendered_clipped_fraction": rendered_clipped_fraction,
         "rendered_left_right_difference_rms": float(np.sqrt(np.mean((rendered[:, 0] - rendered[:, 1]) ** 2))),
         "clock_first_ns": min(data["clock"]) if data["clock"] else None,
@@ -839,30 +1131,55 @@ def export(args: argparse.Namespace) -> Path:
         "episode_end_ns": episode_end_ns,
         "rendered_audio_file": rendered_audio_name,
         "metadata_csv_file": metadata_csv_name,
+        "audio_timing_file": timing_name,
+        "episode_events_file": episode_events_name,
+        "tf_transforms_file": tf_transforms_name,
     }
     (output / validation_name).write_text(json.dumps(validation, indent=2) + "\n", encoding="utf-8")
-    (output / manifest_name).write_text(yaml.safe_dump({
-        "schema_version": 1,
-        **context,
-        "recording_mcap": str(mcap_path),
-        "rendered_audio": rendered_audio_name,
-        "metadata_csv": metadata_csv_name,
-        "raw_audio": raw_audio_name if args.raw_flac else None,
-        "raw_lossless_location": str(mcap_path),
-        "audio_timing": timing_name,
-        "frame_labels": frame_labels_name,
-        "robot_positions": robot_positions_name,
-        "pedestrian_positions": pedestrian_positions_name,
-        "robot_frame_transform": robot_frame_transform,
-        "occupancy_map": map_metadata,
-        "door_mask": door_metadata,
-        "timestamp_unit": "nanoseconds",
-        "timestamp_clock": "ROS simulation time (/clock)",
-        "label_frame_ms": args.label_frame_ms,
-        "max_pose_gap_ms": args.max_pose_gap_ms,
-        "expected_duration_seconds": args.expected_duration,
-        "topics": data["topic_types"],
-    }, sort_keys=False), encoding="utf-8")
+    (output / manifest_name).write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 2,
+                **context,
+                "recording_mcap": str(mcap_path),
+                "episode_metadata": episode_metadata_file,
+                "rendered_audio": rendered_audio_name,
+                "metadata_csv": metadata_csv_name,
+                "raw_audio": raw_audio_name if args.raw_flac else None,
+                "raw_lossless_location": str(mcap_path),
+                "audio_timing": timing_name,
+                "episode_events": episode_events_name,
+                "frame_labels": frame_labels_name,
+                "robot_positions": robot_positions_name,
+                "pedestrian_positions": pedestrian_positions_name,
+                "tf_transforms": tf_transforms_name,
+                "robot_frame_transform": robot_frame_transform,
+                "occupancy_map": map_metadata,
+                "door_mask": door_metadata,
+                "validation": validation_name,
+                "timestamp_unit": "nanoseconds",
+                "timestamp_clock": "ROS simulation time (/clock)",
+                "label_frame_ms": args.label_frame_ms,
+                "max_pose_gap_ms": args.max_pose_gap_ms,
+                "expected_duration_seconds": args.expected_duration,
+                "topics": data["topic_types"],
+                "episode": {
+                    "id": episode_event["episode_id"],
+                    "outcome_state": outcome_state,
+                    "outcome": OUTCOME_LABELS.get(outcome_state, str(outcome_state) if outcome_state is not None else None),
+                    "outcome_info": outcome_info,
+                },
+                "runtime": {
+                    "ros_distribution": episode_metadata.get("ros_distro"),
+                    "arena_git_revision": episode_metadata.get("arena_git_sha"),
+                    "arena_git_dirty": episode_metadata.get("arena_git_dirty"),
+                    "recorded_topics": episode_metadata.get("recorded_topics") or sorted(data["topic_types"]),
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     return output
 
 
@@ -883,16 +1200,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--silence-rms-threshold", type=float, default=1e-5)
     parser.add_argument("--clipping-fraction-threshold", type=float, default=0.01)
     parser.add_argument("--raw-flac", action="store_true", help="also make a listening-oriented FLAC; float MCAP remains the lossless raw representation")
+    parser.add_argument(
+        "--allow-nonterminal-episode",
+        action="store_true",
+        help="export a legacy/incomplete bag without a terminal EpisodeRecord (not accepted by the dataset runner)",
+    )
+    parser.add_argument(
+        "--allow-missing-pedestrians",
+        action="store_true",
+        help="export audio/robot-only metadata when no pedestrian state samples were recorded; not valid source-position training data",
+    )
     parser.add_argument("--force", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.artifact_prefix and (
-        args.artifact_prefix in {".", ".."}
-        or any(character in args.artifact_prefix for character in "/\\\0")
-    ):
+    if args.artifact_prefix and (args.artifact_prefix in {".", ".."} or any(character in args.artifact_prefix for character in "/\\\0")):
         print("export_acoustics_recording: ERROR: --artifact-prefix must be one safe filename component")
         return 2
     try:

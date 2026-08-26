@@ -38,7 +38,10 @@ from task_generator_msgs.msg import (
 from visualization_msgs.msg import Marker, MarkerArray
 
 from task_generator.auditory.asset_lib import AcousticAssetCatalog, CachedSample
-from task_generator.auditory.procedural_audio import DrivetrainRenderSource
+from task_generator.auditory.procedural_audio import (
+    DEFAULT_MOTOR_VOLUME_DB,
+    DrivetrainRenderSource,
+)
 from task_generator.auditory.qos_profiles import (
     acoustic_metadata_qos,
     continuous_audio_qos,
@@ -148,7 +151,7 @@ class MicrophoneArrayNode(Node):
         self.declare_parameter("audio_device", "none")
         self.declare_parameter("audio_retry_period_sec", 2.0)
         self.declare_parameter("audio_diagnostics_period_sec", 5.0)
-        self.declare_parameter("motor_volume_db", -9.0)
+        self.declare_parameter("motor_volume_db", DEFAULT_MOTOR_VOLUME_DB)
         self.declare_parameter("motor_enabled", True)
         self.declare_parameter("motor_mems_calibration_db", -40.0)
         self.declare_parameter("motor_frequency_scale", 1.0)
@@ -191,9 +194,7 @@ class MicrophoneArrayNode(Node):
         self._continuous: dict[tuple[str, int], ContinuousVoice] = {}
         self._procedural: dict[str, ProceduralArrayVoice] = {}
         self._procedural_pending: dict[str, ProceduralLoad] = {}
-        self._continuous_pending: dict[
-            tuple[str, int], tuple[Future[CachedSample], ContinuousHeardSoundState]
-        ] = {}
+        self._continuous_pending: dict[tuple[str, int], tuple[Future[CachedSample], ContinuousHeardSoundState]] = {}
         self._last_levels = np.zeros(7, dtype=np.float32)
         self._output_lock = threading.Lock()
         self._output_blocks: deque[np.ndarray] = deque(maxlen=8)
@@ -256,10 +257,7 @@ class MicrophoneArrayNode(Node):
             self._publish_audio_diagnostics,
             clock=self._steady_clock,
         )
-        self.get_logger().info(
-            f"four-microphone raw array ready: {self.sample_rate} Hz, {self.block_size} frames; "
-            "channel order FL,FR,RL,RR"
-        )
+        self.get_logger().info(f"four-microphone raw array ready: {self.sample_rate} Hz, {self.block_size} frames; channel order FL,FR,RL,RR")
 
     def _on_fleet(self, msg: RobotFleet) -> None:
         if not self._robot_name:
@@ -284,10 +282,7 @@ class MicrophoneArrayNode(Node):
     def _create_output_publishers(self) -> None:
         prefix = f"{self._robot_name}/audio"
         self._raw_pub = self.create_publisher(AudioFrame, f"{prefix}/raw_array", 10)
-        self._channel_pubs = [
-            self.create_publisher(AudioFrame, f"{prefix}/mic_{name}", 10)
-            for name in CHANNEL_NAMES
-        ]
+        self._channel_pubs = [self.create_publisher(AudioFrame, f"{prefix}/mic_{name}", 10) for name in CHANNEL_NAMES]
         self._hearing_pub = self.create_publisher(AudioFrame, f"{prefix}/hearing/mono", 10)
         self._energy_pub = self.create_publisher(Float32MultiArray, f"{prefix}/hearing/energy", 10)
         self._headphone_left_pub = self.create_publisher(AudioFrame, f"{prefix}/headphones/left", 10)
@@ -302,9 +297,7 @@ class MicrophoneArrayNode(Node):
         if str(self.get_parameter("audio_device").value).strip() not in {"", "none"}:
             with self._output_lock:
                 for _ in range(2):
-                    self._output_blocks.append(
-                        np.zeros((self.block_size, 2), dtype=np.float32)
-                    )
+                    self._output_blocks.append(np.zeros((self.block_size, 2), dtype=np.float32))
         self._open_audio_device()
 
     def _listener_channel(self, listener_id: str) -> int | None:
@@ -357,10 +350,7 @@ class MicrophoneArrayNode(Node):
 
     @staticmethod
     def _event_key(msg: HeardSoundEvent) -> str:
-        return str(msg.event_id).strip() or (
-            f"{msg.source_agent_id}:{msg.asset_id or msg.sound_type}:"
-            f"{msg.header.stamp.sec}:{msg.header.stamp.nanosec}"
-        )
+        return str(msg.event_id).strip() or (f"{msg.source_agent_id}:{msg.asset_id or msg.sound_type}:{msg.header.stamp.sec}:{msg.header.stamp.nanosec}")
 
     def _collect_semantic_event(
         self,
@@ -393,15 +383,9 @@ class MicrophoneArrayNode(Node):
         best = max(candidates, key=lambda message: float(message.received_volume_db))
         fused = copy.deepcopy(best)
         fused.listener_id = f"robot:{self._robot_name}"
-        fused.listener_position.x = sum(
-            float(message.listener_position.x) for message in messages
-        ) / len(messages)
-        fused.listener_position.y = sum(
-            float(message.listener_position.y) for message in messages
-        ) / len(messages)
-        fused.listener_position.z = sum(
-            float(message.listener_position.z) for message in messages
-        ) / len(messages)
+        fused.listener_position.x = sum(float(message.listener_position.x) for message in messages) / len(messages)
+        fused.listener_position.y = sum(float(message.listener_position.y) for message in messages) / len(messages)
+        fused.listener_position.z = sum(float(message.listener_position.z) for message in messages) / len(messages)
         dx = float(fused.source_position.x - fused.listener_position.x)
         dy = float(fused.source_position.y - fused.listener_position.y)
         dz = float(fused.source_position.z - fused.listener_position.z)
@@ -409,15 +393,9 @@ class MicrophoneArrayNode(Node):
         fused.bearing_rad = math.atan2(dy, dx)
         fused.received_volume_db = float(best.received_volume_db)
         fused.hearing_threshold_db = float(best.hearing_threshold_db)
-        fused.direct_delay_sec = min(
-            float(message.direct_delay_sec) for message in candidates
-        )
-        fused.audible = bool(audible) and bool(
-            self.get_parameter("enabled").value
-        ) and not bool(self.get_parameter("mute_all").value)
-        fused.occluded = bool(audible) and all(
-            message.occluded for message in audible
-        )
+        fused.direct_delay_sec = min(float(message.direct_delay_sec) for message in candidates)
+        fused.audible = bool(audible) and bool(self.get_parameter("enabled").value) and not bool(self.get_parameter("mute_all").value)
+        fused.occluded = bool(audible) and all(message.occluded for message in audible)
         self._fused_heard_pub.publish(fused)
         self._fused_events += 1
 
@@ -510,26 +488,12 @@ class MicrophoneArrayNode(Node):
         msg: ContinuousHeardSoundState,
         channel: int,
     ) -> None:
-        active = bool(
-            msg.active
-            and msg.audible
-            and self.get_parameter("motor_enabled").value
-        )
+        active = bool(msg.active and msg.audible and self.get_parameter("motor_enabled").value)
         voice.active_channels[channel] = active
-        propagation_gain_db = (
-            float(msg.received_volume_db) - float(msg.source_volume_db)
-            if active
-            else 0.0
-        )
-        voice.gains[channel] = (
-            10.0 ** (propagation_gain_db / 20.0) if active else 0.0
-        )
+        propagation_gain_db = float(msg.received_volume_db) - float(msg.source_volume_db) if active else 0.0
+        voice.gains[channel] = 10.0 ** (propagation_gain_db / 20.0) if active else 0.0
         direct_delay = float(msg.direct_delay_sec) * self.sample_rate
-        voice.delay_samples[channel] = (
-            direct_delay
-            if math.isfinite(direct_delay) and direct_delay >= 0.0
-            else 0.0
-        )
+        voice.delay_samples[channel] = direct_delay if math.isfinite(direct_delay) and direct_delay >= 0.0 else 0.0
         voice.source.update(
             left_velocity=float(msg.left_velocity_mps),
             right_velocity=float(msg.right_velocity_mps),
@@ -541,25 +505,12 @@ class MicrophoneArrayNode(Node):
 
     def _motor_tuning(self) -> dict[str, float]:
         return {
-            "volume_db": (
-                float(self.get_parameter("motor_volume_db").value)
-                + float(self.get_parameter("motor_mems_calibration_db").value)
-            ),
-            "frequency_scale": float(
-                self.get_parameter("motor_frequency_scale").value
-            ),
-            "tonal_gain_db": float(
-                self.get_parameter("motor_tonal_gain_db").value
-            ),
-            "broadband_gain_db": float(
-                self.get_parameter("motor_broadband_gain_db").value
-            ),
-            "speed_exponent": float(
-                self.get_parameter("motor_speed_exponent").value
-            ),
-            "velocity_smoothing_seconds": float(
-                self.get_parameter("motor_velocity_smoothing_sec").value
-            ),
+            "volume_db": (float(self.get_parameter("motor_volume_db").value) + float(self.get_parameter("motor_mems_calibration_db").value)),
+            "frequency_scale": float(self.get_parameter("motor_frequency_scale").value),
+            "tonal_gain_db": float(self.get_parameter("motor_tonal_gain_db").value),
+            "broadband_gain_db": float(self.get_parameter("motor_broadband_gain_db").value),
+            "speed_exponent": float(self.get_parameter("motor_speed_exponent").value),
+            "velocity_smoothing_seconds": float(self.get_parameter("motor_velocity_smoothing_sec").value),
         }
 
     def _poll_loads(self) -> None:
@@ -573,10 +524,7 @@ class MicrophoneArrayNode(Node):
                 continue
             self._semantic_event_groups.pop(event_id, None)
             self._incomplete_semantic_events += 1
-            self.get_logger().warning(
-                f"discarding incomplete four-mic semantic event {event_id!r}: "
-                f"received {len(group.messages)}/{len(CHANNEL_NAMES)} channels"
-            )
+            self.get_logger().warning(f"discarding incomplete four-mic semantic event {event_id!r}: received {len(group.messages)}/{len(CHANNEL_NAMES)} channels")
         for event_id, load in tuple(self._event_loads.items()):
             if not load.future.done():
                 continue
@@ -600,9 +548,7 @@ class MicrophoneArrayNode(Node):
                 calibrated = calibrate_mems(
                     mono,
                     float(msg.received_volume_db),
-                    sensitivity_dbfs_at_94_dbspl=float(
-                        self.get_parameter("sensitivity_dbfs_at_94_dbspl").value
-                    ),
+                    sensitivity_dbfs_at_94_dbspl=float(self.get_parameter("sensitivity_dbfs_at_94_dbspl").value),
                 )
                 delay, delayed = fractional_delay(
                     calibrated,
@@ -634,13 +580,9 @@ class MicrophoneArrayNode(Node):
             mono = np.asarray(sample.samples[:, 0], dtype=np.float32)
             if fraction > 1e-9:
                 # A loop is periodic, so interpolate across its boundary.
-                mono = (
-                    (1.0 - fraction) * mono
-                    + fraction * np.roll(mono, 1)
-                ).astype(np.float32)
+                mono = ((1.0 - fraction) * mono + fraction * np.roll(mono, 1)).astype(np.float32)
             elapsed = max(
-                self.get_clock().now().nanoseconds
-                - (int(msg.program_start_time.sec) * 1_000_000_000 + int(msg.program_start_time.nanosec)),
+                self.get_clock().now().nanoseconds - (int(msg.program_start_time.sec) * 1_000_000_000 + int(msg.program_start_time.nanosec)),
                 0,
             )
             source_start = self._cursor - round(elapsed * self.sample_rate / 1e9) + delay
@@ -661,9 +603,7 @@ class MicrophoneArrayNode(Node):
             try:
                 source = pending.future.result()
             except Exception as exc:
-                self.get_logger().error(
-                    f"procedural drivetrain initialization failed: {exc}"
-                )
+                self.get_logger().error(f"procedural drivetrain initialization failed: {exc}")
                 continue
             source.tune(**self._motor_tuning())
             voice = ProceduralArrayVoice(
@@ -688,9 +628,7 @@ class MicrophoneArrayNode(Node):
         mono_rms = float(rms(samples))
         if mono_rms <= 1e-12:
             return 0.0
-        target_dbfs = received_spl_db - 94.0 + float(
-            self.get_parameter("sensitivity_dbfs_at_94_dbspl").value
-        )
+        target_dbfs = received_spl_db - 94.0 + float(self.get_parameter("sensitivity_dbfs_at_94_dbspl").value)
         return (10.0 ** (target_dbfs / 20.0)) / mono_rms
 
     def _render_raw(self) -> np.ndarray:
@@ -718,20 +656,13 @@ class MicrophoneArrayNode(Node):
                 source_indices %= len(voice.samples)
                 output[channel] += voice.samples[source_indices] * voice.gain
             else:
-                valid = (
-                    (source_indices >= 0)
-                    & (source_indices < len(voice.samples))
-                )
-                output[channel, valid] += (
-                    voice.samples[source_indices[valid]] * voice.gain
-                )
+                valid = (source_indices >= 0) & (source_indices < len(voice.samples))
+                output[channel, valid] += voice.samples[source_indices[valid]] * voice.gain
         for source_id, voice in tuple(self._procedural.items()):
             try:
                 mono = voice.source.render(self.block_size)[:, 0]
             except Exception as exc:
-                self.get_logger().error(
-                    f"procedural drivetrain render failed for {source_id!r}: {exc}"
-                )
+                self.get_logger().error(f"procedural drivetrain render failed for {source_id!r}: {exc}")
                 self._procedural.pop(source_id, None)
                 continue
             delayed, voice.history = streaming_fractional_delays(
@@ -777,13 +708,11 @@ class MicrophoneArrayNode(Node):
             stereo.fill(0.0)
         # AudioFrame.header.stamp is the simulation time of this block's first
         # sample. Sample i is therefore stamp + i / sample_rate.
-        stamp_ns = self._stream_start_ns + round(
-            block_start * 1_000_000_000 / self.sample_rate
-        )
+        stamp_ns = self._stream_start_ns + round(block_start * 1_000_000_000 / self.sample_rate)
         stamp = RosTime(nanoseconds=stamp_ns).to_msg()
         self._raw_pub.publish(self._audio_frame(raw, stamp, CHANNEL_NAMES))
         for index, publisher in enumerate(self._channel_pubs):
-            publisher.publish(self._audio_frame(raw[index:index + 1], stamp, (CHANNEL_NAMES[index],)))
+            publisher.publish(self._audio_frame(raw[index : index + 1], stamp, (CHANNEL_NAMES[index],)))
         self._hearing_pub.publish(
             self._audio_frame(
                 hearing[None, :],
@@ -842,7 +771,8 @@ class MicrophoneArrayNode(Node):
         estimates = {}
         for first, second, label in pairs:
             delay, confidence = gcc_phat(
-                raw[first], raw[second],
+                raw[first],
+                raw[second],
                 sample_rate_hz=self.sample_rate,
                 max_tau_seconds=float(self.get_parameter("max_tdoa_seconds").value),
             )
@@ -857,10 +787,7 @@ class MicrophoneArrayNode(Node):
         markers: list[Marker] = []
         for index, mic in enumerate(self.microphones):
             level_dbfs = dbfs_from_rms(float(self._last_levels[index]))
-            active = (
-                bool(self.get_parameter("enabled").value)
-                and not bool(self.get_parameter("mute_all").value)
-            )
+            active = bool(self.get_parameter("enabled").value) and not bool(self.get_parameter("mute_all").value)
             color = ColorRGBA(r=0.1, g=0.9 if active else 0.25, b=0.3, a=0.95)
             body = Marker()
             body.header.frame_id = self._base_frame()
@@ -951,15 +878,12 @@ class MicrophoneArrayNode(Node):
             }
             overrides = {parameter.name: float(parameter.value) for parameter in parameters}
             if "motor_volume_db" in overrides or "motor_mems_calibration_db" in overrides:
-                tuning["volume_db"] = (
-                    overrides.get(
-                        "motor_volume_db",
-                        float(self.get_parameter("motor_volume_db").value),
-                    )
-                    + overrides.get(
-                        "motor_mems_calibration_db",
-                        float(self.get_parameter("motor_mems_calibration_db").value),
-                    )
+                tuning["volume_db"] = overrides.get(
+                    "motor_volume_db",
+                    float(self.get_parameter("motor_volume_db").value),
+                ) + overrides.get(
+                    "motor_mems_calibration_db",
+                    float(self.get_parameter("motor_mems_calibration_db").value),
                 )
             for parameter_name, tuning_name in parameter_keys.items():
                 if parameter_name in overrides and parameter_name != "motor_volume_db":
@@ -986,12 +910,7 @@ class MicrophoneArrayNode(Node):
 
             selected: str | int | None = None if requested == "auto" else requested
             if requested == "auto" and os.environ.get("PULSE_SERVER"):
-                pulse_outputs = [
-                    index
-                    for index, description in enumerate(sd.query_devices())
-                    if "pulse" in str(description["name"]).lower()
-                    and int(description["max_output_channels"]) >= 2
-                ]
+                pulse_outputs = [index for index, description in enumerate(sd.query_devices()) if "pulse" in str(description["name"]).lower() and int(description["max_output_channels"]) >= 2]
                 if pulse_outputs:
                     selected = pulse_outputs[0]
             sd.query_devices(selected, "output")
@@ -1005,26 +924,17 @@ class MicrophoneArrayNode(Node):
             )
             self._stream.start()
             self._stream_error = ""
-            self.get_logger().info(
-                f"stereo headphone output active on device {self._stream.device}"
-            )
+            self.get_logger().info(f"stereo headphone output active on device {self._stream.device}")
         except Exception as exc:
             error = str(exc)
             if error != self._stream_error:
-                self.get_logger().warning(
-                    f"cannot open stereo headphone output {requested!r}: "
-                    f"{error}; retrying"
-                )
+                self.get_logger().warning(f"cannot open stereo headphone output {requested!r}: {error}; retrying")
             self._stream_error = error
             self._stream = None
 
     def _retry_audio_device(self) -> None:
         requested = str(self.get_parameter("audio_device").value).strip()
-        if (
-            self._publishers_ready
-            and requested not in {"", "none"}
-            and self._stream is None
-        ):
+        if self._publishers_ready and requested not in {"", "none"} and self._stream is None:
             self._open_audio_device()
 
     def _audio_callback(self, outdata: np.ndarray, frames: int, _time: object, status: object) -> None:
@@ -1035,25 +945,16 @@ class MicrophoneArrayNode(Node):
             self._audio_status = status_text
         written = 0
         while written < frames:
-            if (
-                self._output_current is None
-                or self._output_current_offset >= len(self._output_current)
-            ):
+            if self._output_current is None or self._output_current_offset >= len(self._output_current):
                 with self._output_lock:
-                    self._output_current = (
-                        self._output_blocks.popleft()
-                        if self._output_blocks
-                        else None
-                    )
+                    self._output_current = self._output_blocks.popleft() if self._output_blocks else None
                 self._output_current_offset = 0
                 if self._output_current is None:
                     self._audio_underflows += 1
                     break
             available = len(self._output_current) - self._output_current_offset
             count = min(frames - written, available)
-            outdata[written:written + count] = self._output_current[
-                self._output_current_offset:self._output_current_offset + count
-            ]
+            outdata[written : written + count] = self._output_current[self._output_current_offset : self._output_current_offset + count]
             written += count
             self._output_current_offset += count
         self._audio_peak = float(np.max(np.abs(outdata))) if outdata.size else 0.0
