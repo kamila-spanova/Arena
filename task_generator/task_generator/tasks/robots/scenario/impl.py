@@ -11,6 +11,7 @@ from task_generator.tasks.robots.request import GoToPhase, PlayGesturePhase, Tas
 
 class TM_Scenario(TM_Robots):
     _config: ROSParamT[list[RobotGoal]]
+    _linger_after_completion: ROSParamT[bool]
     _idle_robots: set[str]
 
     def _parse_scenario(self, scenario: str) -> list[RobotGoal]:
@@ -80,12 +81,10 @@ class TM_Scenario(TM_Robots):
         if (self.node.sim_time.sec - self._last_reset) > self.node.conf.Robot.TIMEOUT.value:
             return True
 
-        active_robots = [
-            manager
-            for name, manager in self._ctx.robots.items()
-            if name not in self._idle_robots
-        ]
+        active_robots = [manager for name, manager in self._ctx.robots.items() if name not in self._idle_robots]
         if not active_robots:
+            return False
+        if self._linger_after_completion.value:
             return False
         return all(await asyncio.gather(*(manager.is_done for manager in active_robots)))
 
@@ -96,4 +95,8 @@ class TM_Scenario(TM_Robots):
             self.namespace('file'),
             'default.json',
             parse=self._parse_scenario,
+        )
+        self._linger_after_completion = self.node.ROSParam[bool](
+            self.namespace('linger_after_completion'),
+            False,
         )

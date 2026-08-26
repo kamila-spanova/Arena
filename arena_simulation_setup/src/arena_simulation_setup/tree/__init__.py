@@ -18,6 +18,7 @@ from typing_extensions import Self
 
 from arena_simulation_setup import (
     ARENA_ASSETS_DIR,
+    ASS_DIR,
     DOMAIN_DEFAULT,
 )
 from arena_simulation_setup.utils.cattrs import Idempotent, Parseable, Serializable
@@ -31,6 +32,7 @@ async def _subprocess_output(args: Sequence[str], **kwargs: object) -> bytes:
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode or -1, list(args), output=stdout, stderr=stderr)
     return stdout
+
 
 # Utils
 
@@ -62,11 +64,13 @@ class DynamicPath(PathContainer):
 class DynamicPaths:
     WORLD = DynamicPath()
     ARENA = DynamicPath(Path(os.getenv('ARENA_ASSETS_DIR_LOCAL', ARENA_ASSETS_DIR / 'local')))
+    BUILTIN = DynamicPath(ASS_DIR / 'assets')
 
     @classmethod
     def as_resolvers(cls, _T: type[IdentifierT], /) -> Iterable[DynamicPathResolver[IdentifierT]]:
         yield DynamicPathResolver(_T, cls.WORLD, fn=lambda p: p / 'assets')
         yield DynamicPathResolver(_T, cls.ARENA)
+        yield DynamicPathResolver(_T, cls.BUILTIN)
 
 
 IdentifierT = typing.TypeVar('IdentifierT', bound='IdentifierProtocol')

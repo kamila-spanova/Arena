@@ -28,6 +28,12 @@ def _cached_sample(values: list[float]) -> CachedSample:
     )
 
 
+def test_default_motor_volume_is_half_the_previous_amplitude() -> None:
+    ratio = 10.0 ** ((procedural_audio.DEFAULT_MOTOR_VOLUME_DB - (-9.0)) / 20.0)
+
+    assert ratio == pytest.approx(0.5)
+
+
 def test_partitioned_convolver_matches_linear_convolution() -> None:
     rng = np.random.default_rng(7)
     block_size = 32
@@ -35,12 +41,7 @@ def test_partitioned_convolver_matches_linear_convolution() -> None:
     impulse = rng.standard_normal(75).astype(np.float32)
     convolver = PartitionedConvolver(impulse, block_size)
 
-    rendered = np.concatenate(
-        [
-            convolver.process(signal[offset : offset + block_size])
-            for offset in range(0, len(signal), block_size)
-        ]
-    )
+    rendered = np.concatenate([convolver.process(signal[offset : offset + block_size]) for offset in range(0, len(signal), block_size)])
     expected = np.convolve(signal, impulse)[: len(signal)]
 
     np.testing.assert_allclose(rendered, expected, rtol=2e-5, atol=2e-5)

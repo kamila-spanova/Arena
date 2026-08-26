@@ -11,11 +11,10 @@ import launch_ros.actions
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from arena_bringup.actions import IsolatedGroupAction
-from arena_rclpy_mixins import launch_str_to_value
-from arena_bringup.extensions.NodeLogLevelExtension import SetGlobalLogLevelAction
 from arena_bringup.defaults import default_human
+from arena_bringup.extensions.NodeLogLevelExtension import SetGlobalLogLevelAction
 from arena_bringup.substitutions import LaunchArgument, deprecated_launch_args
-from task_generator.utils.flags import expand_flag_namespace, truthy
+from arena_rclpy_mixins import launch_str_to_value
 from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
@@ -25,6 +24,7 @@ from launch.actions import (
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+from task_generator.utils.flags import expand_flag_namespace, truthy
 
 _REGISTER_RETRY_SEC = 1.0
 _REGISTER_LOG_INTERVAL_SEC = 10.0
@@ -78,7 +78,7 @@ def _allocate_env(env_id: int, ns: str) -> tuple[int, str, str]:
         node.destroy_node()
 
 
-def generate_launch_description():
+def generate_launch_description() -> launch.LaunchDescription:
     bringup_dir = get_package_share_directory("arena_bringup")
 
     ld_items = []
@@ -144,18 +144,24 @@ def generate_launch_description():
     )
     auditory_assets = LaunchArgument(
         name="auditory.assets",
-        default_value=PathJoinSubstitution([
-            FindPackageShare("task_generator"),
-            "config", "auditory", "acoustic_assets.yaml",
-        ]),
+        default_value=PathJoinSubstitution(
+            [
+                FindPackageShare("task_generator"),
+                "config",
+                "auditory",
+                "acoustic_assets.yaml",
+            ]
+        ),
         description="Acoustic asset catalog used by all playback nodes.",
     )
     auditory_sound_dir = LaunchArgument(
         name="auditory.sound_dir",
-        default_value=PathJoinSubstitution([
-            FindPackageShare("task_generator"),
-            "sounds",
-        ]),
+        default_value=PathJoinSubstitution(
+            [
+                FindPackageShare("task_generator"),
+                "sounds",
+            ]
+        ),
         description="Directory containing WAV files named by the catalog.",
     )
     auditory_propagation = LaunchArgument(
@@ -234,6 +240,11 @@ def generate_launch_description():
         name='task.scenario',
         default_value='',
         description='Sets task.scenario.file ROS param (empty = use task.params default).',
+    )
+    scenario_linger = LaunchArgument(
+        name='task.scenario.linger_after_completion',
+        default_value='false',
+        description='Keep a completed scenario robot task alive until timeout/external cancellation.',
     )
     tm_obstacles = LaunchArgument(name="task.obstacles", default_value="random")
     tm_modules = LaunchArgument(name="task.modules", default_value="rviz_ui")
@@ -316,20 +327,12 @@ def generate_launch_description():
         arm_val = launch.utilities.perform_substitutions(context, launch.utilities.normalize_to_list_of_substitutions(arm.substitution))
         tm_modules_val = launch.utilities.perform_substitutions(
             context,
-            launch.utilities.normalize_to_list_of_substitutions(
-                tm_modules.substitution
-            ),
+            launch.utilities.normalize_to_list_of_substitutions(tm_modules.substitution),
         )
-        configured_modules = [
-            value.strip()
-            for value in tm_modules_val.split(",")
-            if value.strip()
-        ]
+        configured_modules = [value.strip() for value in tm_modules_val.split(",") if value.strip()]
         static_devices_val = launch.utilities.perform_substitutions(
             context,
-            launch.utilities.normalize_to_list_of_substitutions(
-                auditory_static_devices.substitution
-            ),
+            launch.utilities.normalize_to_list_of_substitutions(auditory_static_devices.substitution),
         ).strip()
         static_audio_enabled = static_devices_val not in ("", "[]")
         if static_audio_enabled and "audio_systems" not in configured_modules:
@@ -369,9 +372,7 @@ def generate_launch_description():
                 # Launch substitutions preserve a relative value as relative
                 # to each node namespace.  Keep this explicitly absolute so
                 # auditory nodes do not resolve it below task_generator_node.
-                "environment_namespace": (
-                    "/" + os.path.dirname(allocated_ns).strip("/")
-                ),
+                "environment_namespace": ("/" + os.path.dirname(allocated_ns).strip("/")),
                 **auditory.dict,
                 **auditory_viz.dict,
                 **auditory_playback.dict,
@@ -469,6 +470,7 @@ def generate_launch_description():
                 {
                     "episodes": episodes.param_value(int),
                     'task.scenario.file': scenario_file.substitution,
+                    'task.scenario.linger_after_completion': scenario_linger.param_value(bool),
                 },
                 *overrides_files,
             ],

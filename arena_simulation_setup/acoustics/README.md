@@ -19,7 +19,10 @@ data/audio_train_set/
     ├── 0001_robot_positions.parquet
     ├── 0001_pedestrian_positions.parquet
     ├── 0001_frame_labels.parquet
+    ├── 0001_tf_transforms.parquet
+    ├── 0001_episode_events.parquet
     ├── 0001_occupancy_map.npz
+    ├── 0001_door_mask.npz
     ├── scenario.yaml
     └── episode_000/episode_000.mcap
 ```
@@ -48,6 +51,27 @@ arena rebuild task_generator arena_evaluation arena_simulation_setup
 source install/setup.bash
 sudo apt install ffmpeg
 ```
+
+Normalize the generated scenario matrix once after downloading/generating the
+acoustics worlds:
+
+```bash
+normalize_acoustics_scenarios \
+  --worlds-root /opt/arena_ws/src/Arena/arena_simulation_setup/acoustics/worlds \
+  --write
+```
+
+The listener robot now stays at end A for both direction variants. In
+`a-to-b`, pedestrians spawn as a separated left/centre/right cluster near the
+robot and initially walk toward B. In `b-to-a`, they spawn as a separated
+cluster at B and initially walk toward the robot. Their first waypoint is
+always ahead of the spawn pose, including three-pedestrian cases, and routes
+reverse at the endpoints so humans continue walking throughout long captures.
+The dataset runner also enables scenario lingering, which keeps a moving-robot
+episode alive after the robot reaches B until the requested audio window ends.
+The same normalization pass changes every acoustics pedestrian model to the
+bundled `arenian` default, including older numeric scenarios, so world preload
+does not require optional network human assets.
 
 List the deterministic execution order without launching anything:
 
@@ -82,5 +106,11 @@ Validation is performed by the Python waiter/exporter invoked by the Bash
 orchestrator, not by Bash syntax alone. A case is accepted only when both audio
 streams cover the requested simulation-time interval, the rendered stream is
 stereo and non-silent, sample timing is contiguous, robot/pedestrian poses can
-be aligned, and the occupancy map belongs to the same environment. Bash exits
+be aligned, all four raw microphone channels and their geometry are present,
+the episode has a terminal state, and the occupancy map belongs to the same
+environment. The waiter owns the episode action and cancels it cleanly only
+after the requested simulation-time coverage is reached, so the MCAP contains
+both RUNNING and terminal episode events. `auditory.playback:=none` disables
+only host speaker/device playback; the rendered stereo robot-hearing topic is
+still produced, recorded to MCAP, and exported losslessly to FLAC. Bash exits
 on any failed preflight, action, capture, export, or missing validation file.

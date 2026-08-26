@@ -19,7 +19,6 @@ FORCE=0
 LIST_ONLY=0
 GAZEBO_FULLSCREEN=0
 LAUNCH_CLIENT_PID=''
-ACTION_PID=''
 CAPTURE_PID=''
 SUPERVISOR_PID_FILE=''
 
@@ -90,7 +89,7 @@ case "$RUNTIME" in auto|docker|native) ;; *) die '--runtime must be auto, docker
 
 for arg in "${EXTRA_LAUNCH_ARGS[@]}"; do
     case "$arg" in
-        sim:=*|world:=*|robot:=*|human:=*|auditory:=*|auditory.playback:=*|microphone_mode:=*|scenario_file:=*|tm_robots:=*|tm_obstacles:=*|auto_reset:=*|env_n:=*|viz:=*|headless:=*|record_data_dir:=*)
+        sim:=*|world:=*|robot:=*|human:=*|auditory:=*|auditory.playback:=*|microphone_mode:=*|scenario_file:=*|tm_robots:=*|tm_obstacles:=*|task.scenario.linger_after_completion:=*|auto_reset:=*|env_n:=*|viz:=*|headless:=*|record_data_dir:=*)
             die "the script owns launch argument '$arg'"
             ;;
     esac
@@ -102,6 +101,9 @@ while IFS= read -r -d '' scenario_file; do
     world_dir="$(dirname -- "$(dirname -- "$scenario_dir")")"
     [[ "$(basename -- "$world_dir")" == $WORLD_GLOB ]] || continue
     [[ "$(basename -- "$scenario_dir")" == $SCENARIO_GLOB ]] || continue
+    if [[ "$(basename -- "$scenario_dir")" == hearing__* ]] && ! grep -q '^  waypoint_mode: reverse$' "$scenario_file"; then
+        die "legacy generated scenario layout found at $scenario_file; run normalize_acoustics_scenarios --worlds-root '$WORLDS_ROOT' --write"
+    fi
     SCENARIO_FILES+=("$scenario_file")
     if ((MAX_SCENARIOS > 0 && ${#SCENARIO_FILES[@]} >= MAX_SCENARIOS)); then break; fi
 done < <(find "$WORLDS_ROOT" -type f -path '*/scenarios/*/scenario.yaml' -print0 | sort -z)
@@ -207,7 +209,6 @@ stop_launch() {
 cleanup() {
     local status=$?
     if [[ -n "$CAPTURE_PID" ]] && kill -0 "$CAPTURE_PID" 2>/dev/null; then kill "$CAPTURE_PID" 2>/dev/null || true; fi
-    if [[ -n "$ACTION_PID" ]] && kill -0 "$ACTION_PID" 2>/dev/null; then kill "$ACTION_PID" 2>/dev/null || true; fi
     stop_launch
     exit "$status"
 }
@@ -231,7 +232,10 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     run_arena="${ARENA_OUTPUT_ROOT}/${run_name}"
     validation="${run_host}/${run_index}_validation.json"
 
-    if [[ -s "$validation" && "$FORCE" -eq 0 ]]; then note "SKIP $run_name (validated)"; continue; fi
+    if [[ -s "$validation" && "$FORCE" -eq 0 ]] && grep -q '"valid": true' "$validation"; then
+        note "SKIP $run_name (validated)"
+        continue
+    fi
     existing_actions="$(run_in_arena ros2 action list 2>/dev/null | grep '/lifecycle/run_episode$' || true)"
     [[ -z "$existing_actions" ]] || die "another Arena environment is already running; stop it before recording: $existing_actions"
     if [[ -e "$run_host" && "$FORCE" -eq 1 ]]; then
@@ -244,7 +248,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     mkdir -p "$run_host"
     cp -- "$scenario_file" "${run_host}/scenario.yaml"
     launch_log="${run_host}/launch.log"
-    action_log="${run_host}/action.log"
     waiter_log="${run_host}/capture_wait.json"
     note "START $run_name world=$world_name"
 
@@ -257,6 +260,7 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
         'sim:=gazebo' "world:=${world_name}" 'robot:=jackal' 'human:=arena' 'auditory:=arena'
         'microphone_mode:=four_mic' 'auditory.playback:=none'
         'tm_robots:=scenario' 'tm_obstacles:=scenario' "scenario_file:=${scenario_name}"
+        'task.scenario.linger_after_completion:=true'
         'auto_reset:=false' 'env_n:=1' "${display_args[@]}"
         "record_data_dir:=${run_arena}" "${EXTRA_LAUNCH_ARGS[@]}"
     )
@@ -316,7 +320,8 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
 
     run_in_arena python3 -m arena_simulation_setup.acoustics.wait_capture \
         --namespace "$env_namespace" --robot-name jackal \
-        --duration "$DURATION" --wall-timeout "$WALL_TIMEOUT" >"$waiter_log" &
+        --duration "$DURATION" --wall-timeout "$WALL_TIMEOUT" \
+        --run-episode-action "$episode_action" --world "$world_name" >"$waiter_log" &
     CAPTURE_PID=$!
     capture_ready=0
     for _ in {1..20}; do
@@ -328,9 +333,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
         sleep 0.25
     done
     ((capture_ready)) || die 'capture waiter did not become ready before the episode action'
-    run_in_arena ros2 action send_goal "$episode_action" task_generator_msgs/action/RunEpisode \
-        "{world: '${world_name}', seed: -1}" >"$action_log" 2>&1 &
-    ACTION_PID=$!
     if ! wait "$CAPTURE_PID"; then
         CAPTURE_PID=''
         [[ ! -s "$waiter_log" ]] || tail -n 20 "$waiter_log" >&2
@@ -338,9 +340,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     fi
     CAPTURE_PID=''
 
-    if kill -0 "$ACTION_PID" 2>/dev/null; then kill "$ACTION_PID" 2>/dev/null || true; fi
-    wait "$ACTION_PID" 2>/dev/null || true
-    ACTION_PID=''
     stop_launch
 
     run_in_arena python3 -m arena_simulation_setup.acoustics.export_recording \
