@@ -33,11 +33,16 @@ from task_generator_msgs.msg import (
     AudioFrame,
     ContinuousHeardSoundState,
     HeardSoundEvent,
+    RenderedSoundActivity,
     RobotFleet,
 )
 from visualization_msgs.msg import Marker, MarkerArray
 
-from task_generator.auditory.asset_lib import AcousticAssetCatalog, CachedSample
+from task_generator.auditory.asset_lib import (
+    AcousticAssetCatalog,
+    CachedSample,
+    footstep_material_tags,
+)
 from task_generator.auditory.procedural_audio import (
     DEFAULT_MOTOR_VOLUME_DB,
     DrivetrainRenderSource,
@@ -101,6 +106,11 @@ class ProceduralArrayVoice:
     gains: np.ndarray
     delay_samples: np.ndarray
     active_channels: np.ndarray
+    source_id: str
+    source_agent_id: int
+    source_agent_name: str
+    sound_type: str
+    asset_id: str
     history: np.ndarray | None = None
 
 
@@ -194,6 +204,7 @@ class MicrophoneArrayNode(Node):
         self._continuous: dict[tuple[str, int], ContinuousVoice] = {}
         self._procedural: dict[str, ProceduralArrayVoice] = {}
         self._procedural_pending: dict[str, ProceduralLoad] = {}
+        self._reported_procedural_activity: dict[tuple[str, int], bool] = {}
         self._continuous_pending: dict[tuple[str, int], tuple[Future[CachedSample], ContinuousHeardSoundState]] = {}
         self._last_levels = np.zeros(7, dtype=np.float32)
         self._output_lock = threading.Lock()
@@ -289,6 +300,11 @@ class MicrophoneArrayNode(Node):
         self._headphone_right_pub = self.create_publisher(AudioFrame, f"{prefix}/headphones/right", 10)
         self._headphone_pub = self.create_publisher(AudioFrame, f"{prefix}/headphones/stereo", 10)
         self._tdoa_pub = self.create_publisher(String, f"{prefix}/diagnostics/tdoa", 10)
+        self._activity_pub = self.create_publisher(
+            RenderedSoundActivity,
+            f"{prefix}/rendered_sound_activity",
+            transient_event_qos(),
+        )
         self._publishers_ready = True
         # Audio sample zero is anchored once in ROS simulation time. Every
         # later block stamp is derived from the sample cursor, so timer jitter
@@ -325,11 +341,17 @@ class MicrophoneArrayNode(Node):
             return
         self._accepted_events += 1
         asset_id = str(msg.asset_id).strip() or str(msg.sound_type).strip()
+        required_tags = (
+            footstep_material_tags(msg.semantic_tags)
+            if asset_id == "footstep"
+            else frozenset()
+        )
         selected = self._catalog.select(
             asset_id,
             episode_seed=0,
             agent_id=int(msg.source_agent_id),
             occurrence=self._stable_occurrence(str(msg.event_id)),
+            required_tags=required_tags,
         )
         if selected is None:
             self.get_logger().warning(f"no raw-array acoustic asset {asset_id!r}")
@@ -555,6 +577,13 @@ class MicrophoneArrayNode(Node):
                     float(msg.direct_delay_sec) * self.sample_rate,
                 )
                 self._clips[channel].append(ScheduledClip(load.anchor + delay, delayed))
+                self._publish_discrete_activity(
+                    event_id,
+                    channel,
+                    msg,
+                    load.anchor + delay,
+                    load.anchor + delay + len(delayed),
+                )
                 load.scheduled_channels.add(channel)
             if len(load.scheduled_channels) == 4 or now - load.updated_at > 1.0:
                 self._event_loads.pop(event_id, None)
@@ -612,6 +641,11 @@ class MicrophoneArrayNode(Node):
                 gains=np.zeros(4, dtype=np.float32),
                 delay_samples=np.zeros(4, dtype=np.float64),
                 active_channels=np.zeros(4, dtype=np.bool_),
+                source_id=source_id,
+                source_agent_id=int(next(iter(pending.messages.values())).source_agent_id),
+                source_agent_name=str(next(iter(pending.messages.values())).source_agent_name),
+                sound_type=str(next(iter(pending.messages.values())).sound_type),
+                asset_id=str(next(iter(pending.messages.values())).asset_id),
             )
             self._procedural[source_id] = voice
             for channel, msg in pending.messages.items():
@@ -683,6 +717,7 @@ class MicrophoneArrayNode(Node):
             self._stream_start_ns = self.get_clock().now().nanoseconds
         block_start = self._cursor
         self._poll_loads()
+        self._publish_procedural_activity_transitions(block_start)
         raw = self._render_raw()
         enabled = bool(self.get_parameter("enabled").value)
         muted = bool(self.get_parameter("mute_all").value)
@@ -747,6 +782,102 @@ class MicrophoneArrayNode(Node):
                 if len(self._output_blocks) == self._output_blocks.maxlen:
                     self._audio_overflows += 1
                 self._output_blocks.append(playback.copy())
+
+    def _sample_time(self, sample_index: int) -> object:
+        if self._stream_start_ns is None:
+            raise RuntimeError("audio sample clock is not initialized")
+        return RosTime(
+            nanoseconds=self._stream_start_ns
+            + round(sample_index * 1_000_000_000 / self.sample_rate)
+        ).to_msg()
+
+    def _publish_discrete_activity(
+        self,
+        event_id: str,
+        channel: int,
+        source: HeardSoundEvent,
+        start_sample: int,
+        end_sample: int,
+    ) -> None:
+        msg = RenderedSoundActivity()
+        msg.header.stamp = self._sample_time(start_sample)
+        msg.header.frame_id = self._base_frame()
+        msg.stream_id = f"{self._robot_name}/audio/raw_array"
+        msg.event_id = event_id
+        msg.source_id = str(source.source_agent_name) or str(source.source_agent_id)
+        msg.source_agent_id = int(source.source_agent_id)
+        msg.source_agent_name = str(source.source_agent_name)
+        msg.source_type = (
+            "robot"
+            if str(source.sound_type).strip().lower() == "motor"
+            else "pedestrian" if int(source.source_agent_id) >= 0 else "unknown"
+        )
+        msg.sound_type = str(source.sound_type)
+        msg.asset_id = str(source.asset_id)
+        msg.channel_name = CHANNEL_NAMES[channel]
+        msg.continuous = False
+        msg.active = True
+        msg.start_sample_index = start_sample
+        msg.end_sample_index = end_sample
+        msg.start_time = self._sample_time(start_sample)
+        msg.end_time = self._sample_time(end_sample)
+        self._activity_pub.publish(msg)
+
+    def _publish_procedural_activity_transitions(self, sample_index: int) -> None:
+        current: dict[tuple[str, int], bool] = {}
+        voices = dict(self._procedural)
+        for source_id, voice in voices.items():
+            for channel, channel_name in enumerate(CHANNEL_NAMES):
+                key = (source_id, channel)
+                active = bool(voice.active_channels[channel])
+                current[key] = active
+                if self._reported_procedural_activity.get(key, False) == active:
+                    continue
+                msg = RenderedSoundActivity()
+                msg.header.stamp = self._sample_time(sample_index)
+                msg.header.frame_id = self._base_frame()
+                msg.stream_id = f"{self._robot_name}/audio/raw_array"
+                msg.event_id = f"continuous:{source_id}"
+                msg.source_id = source_id
+                msg.source_agent_id = voice.source_agent_id
+                msg.source_agent_name = voice.source_agent_name
+                msg.source_type = "robot"
+                msg.sound_type = voice.sound_type or "motor"
+                msg.asset_id = voice.asset_id
+                msg.channel_name = channel_name
+                msg.continuous = True
+                msg.active = active
+                msg.start_sample_index = sample_index
+                msg.end_sample_index = sample_index
+                msg.start_time = self._sample_time(sample_index)
+                msg.end_time = msg.start_time
+                self._activity_pub.publish(msg)
+        for key, was_active in tuple(self._reported_procedural_activity.items()):
+            if was_active and key not in current:
+                source_id, channel = key
+                # A finished voice still needs an explicit closing transition.
+                voice = voices.get(source_id)
+                msg = RenderedSoundActivity()
+                msg.header.stamp = self._sample_time(sample_index)
+                msg.header.frame_id = self._base_frame()
+                msg.stream_id = f"{self._robot_name}/audio/raw_array"
+                msg.event_id = f"continuous:{source_id}"
+                msg.source_id = source_id
+                msg.source_agent_id = voice.source_agent_id if voice else -1
+                msg.source_agent_name = voice.source_agent_name if voice else ""
+                msg.source_type = "robot"
+                msg.sound_type = voice.sound_type if voice else "motor"
+                msg.asset_id = voice.asset_id if voice else ""
+                msg.channel_name = CHANNEL_NAMES[channel]
+                msg.continuous = True
+                msg.active = False
+                msg.start_sample_index = sample_index
+                msg.end_sample_index = sample_index
+                msg.start_time = self._sample_time(sample_index)
+                msg.end_time = msg.start_time
+                self._activity_pub.publish(msg)
+                current[key] = False
+        self._reported_procedural_activity = current
 
     def _audio_frame(self, audio: np.ndarray, stamp: object, names: tuple[str, ...], *, spatial: bool = True) -> AudioFrame:
         msg = AudioFrame()

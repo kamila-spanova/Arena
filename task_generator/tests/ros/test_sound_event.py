@@ -53,6 +53,7 @@ def _make_sound_event():
     event.sound_type = "greeting"
     event.label = "greeting"
     event.asset_id = "greeting"
+    event.semantic_tags = ["human", "greeting"]
     event.source_position.x = 0.0
     event.source_position.y = 0.0
     event.source_position.z = 0.0
@@ -192,6 +193,7 @@ def test_sound_event_round_trips_to_heard_sound_event(rclpy_context):
         assert heard.event_id == "roundtrip_001"
         assert heard.listener_id == "agent:2"
         assert heard.sound_type == "greeting"
+        assert heard.semantic_tags == ["human", "greeting"]
         assert heard.distance == pytest.approx(5.0)
         assert heard.occluded is False
         assert heard.audible is True
@@ -1280,6 +1282,25 @@ def test_human_sound_detector_uses_pose_when_twist_is_zero():
     moved.pedestrians.append(_make_pedestrian(9, 1.2, 2.0))
     detector.update(moved, 1.5)
     assert emitted == [("footstep", 9)]
+
+
+def test_human_sound_detector_never_greets_with_one_pedestrian():
+    from arena_people_msgs.msg import Pedestrians
+    from task_generator.simulators.human.auditory_events import (
+        AuditoryEventDetector,
+    )
+
+    emitted: list[tuple[str, int]] = []
+    detector = AuditoryEventDetector(
+        lambda sound_type, ped: emitted.append((sound_type, int(ped.id)))
+    )
+    pedestrians = Pedestrians()
+    pedestrians.pedestrians.append(_make_pedestrian(9, 1.0, 2.0))
+
+    for now_sec in range(20):
+        detector.update(pedestrians, float(now_sec))
+
+    assert all(sound_type != "greeting" for sound_type, _ in emitted)
 
 
 def test_sound_propagation_uses_base_frame_when_listener_frame_is_empty(

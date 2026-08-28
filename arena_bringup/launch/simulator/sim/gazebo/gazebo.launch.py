@@ -233,11 +233,15 @@ def generate_launch_description():
         headless_val = context.perform_substitution(headless.substitution)
         skeleton_val = context.perform_substitution(ped_skeleton_enabled.substitution)
         skeleton_on = skeleton_val.lower() not in ('false', '0')
+        is_headless = headless_val.lower() in ("true", "1")
         resolved_world = _inject_ped_skeleton_plugin(resolved_world, skeleton_on)
-        engine = _select_render_engine()
+        # Server-only (-s) still initializes the Sensors render engine.  With
+        # no DISPLAY, Ogre1 consequently tries GLX and aborts.  Gazebo's true
+        # headless path uses EGL and requires Ogre2.
+        engine = "ogre2" if is_headless else _select_render_engine()
         gz_args = resolved_world + f" -r --render-engine {engine}"
-        if headless_val.lower() in ("true", "1"):
-            gz_args += " -s"
+        if is_headless:
+            gz_args += " -s --headless-rendering"
         else:
             gz_args += f" --gui-config {_render_gui_config(engine)}"
         include = IncludeLaunchDescription(

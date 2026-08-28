@@ -8,13 +8,14 @@ import time
 from typing import Any
 
 import rclpy
+from geometry_msgs.msg import Point
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.task import Future
 from rosgraph_msgs.msg import Clock
 from task_generator_msgs.action import RunEpisode
-from task_generator_msgs.msg import AudioFrame, EpisodeRecord
+from task_generator_msgs.msg import AudioFrame, EpisodeRecord, HeardSoundEvent
 
 
 class CaptureWaiter(Node):
@@ -27,6 +28,7 @@ class CaptureWaiter(Node):
         *,
         run_episode_action: str | None = None,
         world: str = "",
+        inject_reference_sound: bool = False,
     ):
         super().__init__("arena_acoustics_capture_waiter")
         self.duration_ns = round(duration * 1_000_000_000)
@@ -49,12 +51,19 @@ class CaptureWaiter(Node):
         self.action_episode_id: int | None = None
         self.terminal_event_state: int | None = None
         self.terminal_event_info: str | None = None
+        self.inject_reference_sound = inject_reference_sound
+        self.injected_reference_events = 0
         qos = QoSProfile(depth=100, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        self.create_subscription(Clock, "/clock", self._clock, qos)
+        # rclpy.node.Node owns an instance attribute named ``_clock``. Using
+        # that name for our callback works only until Node.__init__ replaces
+        # the bound method with its Clock object, which Jazzy then rejects as
+        # a non-callable subscription callback.
+        self.create_subscription(Clock, "/clock", self._on_clock, qos)
         prefix = "/" + namespace.strip("/") if namespace.strip("/") else ""
         robot = robot_name.strip("/")
         if not robot:
             raise ValueError("robot_name must not be empty")
+        self.robot_name = robot
         self.raw_topic = f"{prefix}/{robot}/audio/raw_array"
         self.rendered_topic = f"{prefix}/{robot}/audio/headphones/stereo"
         self.episode_topic = f"{prefix}/state/episode"
@@ -66,6 +75,17 @@ class CaptureWaiter(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(EpisodeRecord, self.episode_topic, self._episode, episode_qos)
+        sound_qos = QoSProfile(
+            depth=50,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.VOLATILE,
+        )
+        self.sound_publisher = (
+            self.create_publisher(HeardSoundEvent, f"{prefix}/heard_sound_events", sound_qos)
+            if inject_reference_sound
+            else None
+        )
+        self.create_timer(2.0, self._publish_reference_sound)
         self.create_timer(0.25, self._watchdog)
         self.action_client = ActionClient(self, RunEpisode, run_episode_action) if run_episode_action else None
 
@@ -125,7 +145,7 @@ class CaptureWaiter(Node):
     def _stamp(msg: AudioFrame) -> int:
         return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
 
-    def _clock(self, msg: Clock) -> None:
+    def _on_clock(self, msg: Clock) -> None:
         self.clock_ns = int(msg.clock.sec) * 1_000_000_000 + int(msg.clock.nanosec)
 
     def _raw(self, msg: AudioFrame) -> None:
@@ -144,6 +164,7 @@ class CaptureWaiter(Node):
         state = int(msg.outcome_state)
         if state == int(EpisodeRecord.RUNNING):
             self.start_ns = int(msg.start_time.sec) * 1_000_000_000 + int(msg.start_time.nanosec)
+            self._publish_reference_sound()
         elif state in (
             int(EpisodeRecord.SUCCESS),
             int(EpisodeRecord.FAILED),
@@ -156,6 +177,52 @@ class CaptureWaiter(Node):
                 self.error = f"episode ended before audio coverage completed: state={state} info={msg.outcome_info!r}"
                 self.done = True
         self._maybe_finish()
+
+    def _publish_reference_sound(self) -> None:
+        """Inject an audible, deterministic calibration event during capture.
+
+        Some simulator backends provide pedestrian trajectories without their
+        optional footstep event bridge. The reference greeting still traverses
+        the normal propagation and microphone mixer, making silent captures a
+        hard failure while keeping the stimulus identifiable in diagnostics.
+        """
+        # RUNNING is a state stream, not a one-shot event, and the timer below
+        # deliberately retries while startup settles.  Never turn either into
+        # a repeating greeting: one calibration event is sufficient for this
+        # single capture waiter.
+        if (
+            self.sound_publisher is None
+            or self.start_ns is None
+            or self.coverage_complete
+            or self.injected_reference_events >= 1
+        ):
+            return
+        stamp = self.get_clock().now().to_msg()
+        event_id = f"dataset-reference:{self.injected_reference_events}:{stamp.sec}:{stamp.nanosec}"
+        for index, channel in enumerate(("front_left", "front_right", "rear_left", "rear_right")):
+            msg = HeardSoundEvent()
+            msg.header.stamp = stamp
+            msg.header.frame_id = "map"
+            msg.event_id = event_id
+            msg.listener_id = f"{self.robot_name}_mic_{channel}"
+            msg.source_agent_id = -10_001
+            msg.source_agent_name = "dataset_reference_source"
+            msg.sound_type = "greeting"
+            msg.label = "dataset_reference"
+            msg.asset_id = "greeting"
+            msg.source_position = Point(x=0.0, y=0.0, z=1.6)
+            msg.listener_position = Point(x=1.5, y=4.7, z=0.3)
+            msg.distance = 4.93
+            msg.bearing_rad = -1.88
+            msg.source_volume_db = 85.0
+            msg.received_volume_db = 74.0 - 0.25 * index
+            msg.hearing_threshold_db = 20.0
+            msg.direct_delay_sec = 0.014 + 0.0001 * index
+            msg.audible = True
+            msg.propagation_level = 3
+            msg.propagation_backend = "dataset_reference"
+            self.sound_publisher.publish(msg)
+        self.injected_reference_events += 1
 
     def _chunk_end(self, msg: AudioFrame) -> int:
         channels = int(msg.channel_count)
@@ -202,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--robot-name", default="jackal")
     parser.add_argument("--run-episode-action", help="send and cleanly cancel this RunEpisode action after capture")
     parser.add_argument("--world", default="", help="world passed to --run-episode-action")
+    parser.add_argument("--inject-reference-sound", action="store_true", help="publish an audible calibration event every two seconds during the episode")
     args = parser.parse_args(argv)
     rclpy.init()
     node = CaptureWaiter(
@@ -211,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         args.robot_name,
         run_episode_action=args.run_episode_action,
         world=args.world,
+        inject_reference_sound=args.inject_reference_sound,
     )
     try:
         node.start_episode()
@@ -226,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             "rendered_end_timestamp_ns": node.rendered_end_ns,
             "raw_chunks_seen": node.raw_chunks,
             "rendered_chunks_seen": node.rendered_chunks,
+            "injected_reference_events": node.injected_reference_events,
             "raw_topic": node.raw_topic,
             "rendered_topic": node.rendered_topic,
             "episode_topic": node.episode_topic,

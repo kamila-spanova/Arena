@@ -1871,6 +1871,7 @@ class SoundPropagationNode(Node):
         msg.sound_type = event.sound_type
         msg.label = event.label
         msg.asset_id = event.asset_id
+        msg.semantic_tags = list(event.semantic_tags)
         msg.source_position = event.source_position
         msg.listener_position = listener_pos
         msg.distance = float(geometric_distance)
@@ -2061,6 +2062,7 @@ class SoundPropagationNode(Node):
         msg.sound_type = event.sound_type
         msg.label = event.label
         msg.asset_id = event.asset_id
+        msg.semantic_tags = list(event.semantic_tags)
         msg.source_position = event.source_position
         msg.listener_position = listener_pos
         msg.distance = float(distance)
@@ -2355,6 +2357,7 @@ class SoundPropagationNode(Node):
         msg.sound_type = event.sound_type
         msg.label = event.label
         msg.asset_id = event.asset_id
+        msg.semantic_tags = list(event.semantic_tags)
         msg.source_position = event.source_position
         msg.listener_position = listener_position
         msg.distance = float(distance)

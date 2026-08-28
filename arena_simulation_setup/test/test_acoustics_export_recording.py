@@ -13,6 +13,7 @@ from arena_simulation_setup.acoustics.export_recording import (
     _merge_pedestrian_sources,
     assemble_audio,
     audio_statistics,
+    build_rendered_activity_intervals,
     build_labels,
     clip_audio_chunks,
     occupancy_ray_labels,
@@ -20,6 +21,7 @@ from arena_simulation_setup.acoustics.export_recording import (
     transform_robot_trajectory,
     write_csv,
     write_map_snapshot,
+    write_parquet,
 )
 
 
@@ -37,6 +39,18 @@ def chunk(index: int, timestamp_ns: int, values: list[tuple[float, float]]) -> A
         microphone_frame="robot/microphones",
         payload=payload,
     )
+
+
+def test_uint64_seed_can_be_written_losslessly(tmp_path: Path) -> None:
+    path = tmp_path / "continuous.parquet"
+    seed = str(2**64 - 1)
+
+    write_parquet(path, [{"deterministic_seed": seed, "active": True}])
+
+    import pyarrow.parquet as pq
+    assert pq.read_table(path).to_pylist() == [
+        {"deterministic_seed": seed, "active": True}
+    ]
 
 
 def test_assemble_audio_uses_sample_index_and_reports_gap():
@@ -139,6 +153,66 @@ def test_robot_odometry_is_transformed_into_map_frame():
     np.testing.assert_allclose([aligned[0]["vx"], aligned[0]["vy"]], [0.0, 1.0], atol=1e-7)
     assert aligned[0]["frame_id"] == "map"
     assert provenance["transform"] == "map->odom"
+    np.testing.assert_allclose(
+        [aligned[0]["qx"], aligned[0]["qy"], aligned[0]["qz"], aligned[0]["qw"]],
+        [0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)],
+    )
+
+
+def test_rendered_activity_intervals_merge_channels_and_classify_frames():
+    records = [
+        {
+            "event_id": "step-1", "source_id": "agent_7",
+            "source_agent_id": 7, "source_agent_name": "agent_7",
+            "source_type": "pedestrian", "sound_type": "footstep",
+            "asset_id": "footstep", "channel_name": channel,
+            "continuous": False, "active": True,
+            "start_time_ns": start, "end_time_ns": end,
+        }
+        for channel, start, end in (
+            ("front_left", 1_002_000_000, 1_012_000_000),
+            ("front_right", 1_003_000_000, 1_013_000_000),
+        )
+    ]
+    records.extend(
+        [
+            {
+                "event_id": "continuous:motor", "source_id": "motor",
+                "source_agent_id": -1, "source_agent_name": "jackal",
+                "source_type": "robot", "sound_type": "motor", "asset_id": "",
+                "channel_name": "front_left", "continuous": True,
+                "active": active, "start_time_ns": timestamp,
+                "end_time_ns": timestamp,
+            }
+            for active, timestamp in ((True, 1_005_000_000), (False, 1_015_000_000))
+        ]
+    )
+
+    intervals = build_rendered_activity_intervals(
+        records,
+        capture_start_ns=1_000_000_000,
+        capture_end_ns=1_020_000_000,
+        sample_rate=1000,
+        first_sample_index=100,
+    )
+
+    assert len(intervals) == 2
+    footstep = next(row for row in intervals if row["sound_type"] == "footstep")
+    assert footstep["start_recording_sample_offset"] == 2
+    assert footstep["end_recording_sample_offset"] == 13
+    assert footstep["channel_names"] == ["front_left", "front_right"]
+
+    audio = np.ones((20, 2), dtype=np.float32) * 0.5
+    summary = {"sample_rate": 1000, "first_timestamp_ns": 1_000_000_000, "first_sample_index": 100}
+    robot = [{"timestamp_ns": 1_000_000_000, "x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0, "vx": 0.0, "vy": 0.0, "vz": 0.0, "yaw_rate": 0.0}]
+    labels = build_labels(
+        audio, summary, audio, summary, robot, {},
+        frame_ms=10, max_pose_gap_ms=20, emit_robot_only=True,
+        activity_intervals=intervals,
+    )
+    assert labels[0]["activity_class"] == "single_pedestrian_plus_motor"
+    assert labels[0]["active_pedestrian_ids"] == [7]
+    assert labels[1]["activity_class"] == "single_pedestrian_plus_motor"
 
 
 def test_labels_join_audio_to_interpolated_robot_and_pedestrian_pose():

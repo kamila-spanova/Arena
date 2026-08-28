@@ -29,6 +29,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/ContinuousAudioSourceState.msg
   msg/ContinuousHeardSoundState.msg
   msg/HeardSoundEvent.msg
+  msg/RenderedSoundActivity.msg
   msg/SoundEvent.msg
   srv/DespawnRobot.srv
   srv/GetTaskModes.srv

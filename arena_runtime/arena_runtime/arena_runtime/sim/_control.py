@@ -111,20 +111,29 @@ def robot_controllers(robot_config: "RobotView", resolved: ResolvedAssembly | No
     return effective_controllers(resolved, control_spec.controllers, prefix=prefix)
 
 
-def controller_spawner_node(controller_name: str) -> launch_ros.actions.Node:
-    """Spawn one controller into the namespace-local controller_manager.
+def controller_spawner_node(controller_names: Sequence[str]) -> launch_ros.actions.Node:
+    """Spawn all robot controllers through one namespace-local client.
 
     `--controller-manager-timeout 0` is the spawner's wait-forever sentinel.
     `--switch-timeout 600` is a large finite (CM rejects 0 and uses 1s); covers
     the sim-paused-during-reset window without masking real hangs forever.
+
+    A separate process per controller races concurrent load/configure service
+    calls.  In long dataset runs that occasionally left a controller loaded
+    but unconfigured ("already loaded" followed by "failed to configure").
+    The supported multi-controller mode serializes setup in one process and
+    activates the complete set atomically.
     """
+    names = list(controller_names)
+    if not names:
+        raise ValueError("controller_names must not be empty")
     return launch_ros.actions.Node(
         package='controller_manager',
         executable='spawner',
-        name=f'spawner_{controller_name}',
+        name='spawner_robot_controllers',
         output='screen',
         arguments=[
-            controller_name,
+            *names,
             '--controller-manager',
             'controller_manager',
             '--controller-manager-timeout',
@@ -133,6 +142,7 @@ def controller_spawner_node(controller_name: str) -> launch_ros.actions.Node:
             '600',
             '--service-call-timeout',
             '600',
+            '--activate-as-group',
         ],
         parameters=[{'use_sim_time': True}],
     )

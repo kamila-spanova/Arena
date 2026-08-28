@@ -86,6 +86,11 @@ def generate_launch_description() -> launch.LaunchDescription:
         choices=["sequence", "single_loop"],
         default_value="sequence",
     )
+    auditory_motor_mems_calibration = LaunchArgument(
+        name="auditory.motor.mems_calibration_db",
+        default_value="-40.0",
+        description="Four-microphone procedural motor calibration in dB.",
+    )
     auditory_environment_playback = LaunchArgument(
         name="auditory.environment_playback",
         default_value="true",
@@ -419,6 +424,7 @@ def generate_launch_description() -> launch.LaunchDescription:
                         "microphone_marker_topic": "microphone_markers",
                         "visualization_enabled": auditory_viz.param_value(bool),
                         "audio_device": auditory_playback.substitution,
+                        "motor_mems_calibration_db": auditory_motor_mems_calibration.param_value(float),
                     },
                 ],
             ),

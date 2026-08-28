@@ -197,6 +197,11 @@ def generate_launch_description() -> launch.LaunchDescription:
         default_value="sequence",
         description="WAV motor audio: start/loop/stop sequence, or a single repeating loop.",
     )
+    auditory_motor_mems_calibration = LaunchArgument(
+        name="auditory.motor.mems_calibration_db",
+        default_value="-40.0",
+        description="Four-microphone procedural motor calibration in dB; less negative is louder.",
+    )
     auditory_environment_playback = LaunchArgument(
         name="auditory.environment_playback",
         default_value="true",
@@ -274,6 +279,12 @@ def generate_launch_description() -> launch.LaunchDescription:
         name="record.auto",
         default_value="true",
         description="Spawn the data recorder when record.dir is set.",
+    )
+    record_profile = LaunchArgument(
+        name="record.profile",
+        default_value="evaluation",
+        choices=["evaluation", "acoustic_dataset"],
+        description="Recorder topic profile; acoustic_dataset omits navigation and evaluation-only telemetry.",
     )
     LaunchArgument(
         name="debug",
@@ -385,6 +396,7 @@ def generate_launch_description() -> launch.LaunchDescription:
                 **auditory_robot_sound.dict,
                 **auditory_motor.dict,
                 **auditory_motor_playback.dict,
+                **auditory_motor_mems_calibration.dict,
                 **auditory_environment_playback.dict,
                 **auditory_listener.dict,
                 **auditory_microphones.dict,
@@ -502,6 +514,8 @@ def generate_launch_description() -> launch.LaunchDescription:
                 'use_sim_time:=true',
                 '-p',
                 ['record_data_dir:=', record_dir.substitution],
+                '-p',
+                ['recording_profile:=', record_profile.substitution],
                 '-r',
                 ['__ns:=/', allocated_ns],
             ],

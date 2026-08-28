@@ -831,8 +831,11 @@ class GazeboSimulator(BaseSim):
         if control_spec is not None and control_spec.is_ros2_control:
             if not control_spec.controllers:
                 raise ValueError(f"control.mode=ros2_control but no controllers declared for {robot.name}")
-            for controller_name in robot_controllers(robot_config, robot.resolved_assembly):
-                launch_description.add_action(controller_spawner_node(controller_name))
+            launch_description.add_action(
+                controller_spawner_node(
+                    robot_controllers(robot_config, robot.resolved_assembly)
+                )
+            )
             launch_description.add_action(
                 twist_stamper_node(
                     control_spec.cmd_vel_topic,

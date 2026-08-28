@@ -47,6 +47,7 @@ from task_generator.auditory.asset_lib import (
     AcousticAsset,
     AcousticAssetCatalog,
     CachedSample,
+    footstep_material_tags,
 )
 from task_generator.auditory.audio_mixer import AudioMixer
 from task_generator.auditory.material_catalog import AcousticMaterialCatalog
@@ -75,8 +76,6 @@ PlaybackEventMsg = HeardSoundEvent | SoundEvent
 PropagatedEventMsg = ContinuousHeardSoundState | HeardSoundEvent
 #: Any of the three event flavours the node handles.
 SoundEventMsg = ContinuousHeardSoundState | HeardSoundEvent | SoundEvent
-
-FOOTSTEP_VARIANT_TAGS = frozenset({"default", "walnut_planks", "oak_planks", "marble_tile", "smooth_concrete", "ceramic_tile"})
 
 MOTOR_TUNING_PARAMETERS = {
     "motor_volume_db": (
@@ -865,12 +864,12 @@ class SoundPlaybackNode(Node):
         required_tags = frozenset()
 
         if asset_id == "footstep":
-            semantic_tags = tuple(str(tag) for tag in msg.semantic_tags) if isinstance(msg, SoundEvent) else ()
+            semantic_tags = tuple(str(tag) for tag in msg.semantic_tags)
             if not semantic_tags:
                 room = self._room_for_event(msg)
                 floor_id = room.floor_material_id.lower() if room is not None else ""
                 semantic_tags = ("walnut_planks",) if "walnut" in floor_id else ("oak_planks",) if "oak" in floor_id else ("marble_tile",) if "marble" in floor_id else ("smooth_concrete",) if "smooth" in floor_id else ("ceramic_tile",) if "ceramic" in floor_id else ("default",)
-            required_tags = frozenset(FOOTSTEP_VARIANT_TAGS.intersection(semantic_tags)) or frozenset({"default"})
+            required_tags = footstep_material_tags(semantic_tags)
 
         selected = self._catalog.select(
             asset_id,
