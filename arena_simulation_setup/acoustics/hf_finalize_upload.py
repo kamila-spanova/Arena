@@ -174,6 +174,21 @@ def verify_remote(
                 )
 
 
+def dataset_repo_exists(api: HfApi, repo_id: str) -> bool:
+    """Check repository access without mistaking authorization errors for absence."""
+    try:
+        api.repo_info(repo_id=repo_id, repo_type="dataset")
+    except RepositoryNotFoundError as exc:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code == 404:
+            return False
+        die(
+            f"cannot access dataset repository {repo_id!r} (HTTP {status_code or 'unknown'}); "
+            "verify the token identity and its access to this repository"
+        )
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir", type=Path, nargs="?")
@@ -203,11 +218,17 @@ def main() -> int:
             f"{args.remote_prefix}/manifest.json",
             f"{args.remote_prefix}/checksums.sha256",
         ]
-        try:
-            infos = api.get_paths_info(args.repo_id, paths=required, repo_type="dataset")
-        except RepositoryNotFoundError:
+        if not dataset_repo_exists(api, args.repo_id):
             print("MISSING")
             return 0
+        try:
+            infos = api.get_paths_info(args.repo_id, paths=required, repo_type="dataset")
+        except RepositoryNotFoundError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            die(
+                f"repository became inaccessible while checking {args.remote_prefix!r} "
+                f"(HTTP {status_code or 'unknown'})"
+            )
         found = {item.path for item in infos}
         print("EXISTS" if all(path in found for path in required) else "MISSING")
         return 0
@@ -288,12 +309,15 @@ def main() -> int:
 
     inventory = write_checksums(run_dir)
 
-    api.create_repo(
-        repo_id=args.repo_id,
-        repo_type="dataset",
-        private=args.private,
-        exist_ok=True,
-    )
+    # Repository-scoped write tokens can upload to an existing dataset while
+    # lacking account-level permission for the repository-creation endpoint.
+    # Do not call that endpoint for every scenario.
+    if not dataset_repo_exists(api, args.repo_id):
+        api.create_repo(
+            repo_id=args.repo_id,
+            repo_type="dataset",
+            private=args.private,
+        )
 
     commit = api.upload_folder(
         repo_id=args.repo_id,

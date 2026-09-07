@@ -1,0 +1,571 @@
+zones:
+- name: zone_01
+  description: Convex acoustic zone 1
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 20.107
+    y: 25.776
+    z: 0.0
+  - x: 27.8
+    y: 25.776
+    z: 0.0
+  - x: 27.8
+    y: 26.775
+    z: 0.0
+  - x: 20.107
+    y: 26.775
+    z: 0.0
+  walls:
+  - start:
+      x: 22.055
+      y: 25.776
+      z: 0.0
+    end:
+      x: 26.351
+      y: 25.776
+      z: 0.0
+  - start:
+      x: 27.8
+      y: 25.776
+      z: 0.0
+    end:
+      x: 27.8
+      y: 26.775
+      z: 0.0
+  - start:
+      x: 27.8
+      y: 26.775
+      z: 0.0
+    end:
+      x: 20.107
+      y: 26.775
+      z: 0.0
+  - start:
+      x: 20.107
+      y: 26.775
+      z: 0.0
+    end:
+      x: 20.107
+      y: 25.776
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_02
+  description: Convex acoustic zone 2
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 20.107
+    y: 20.531
+    z: 0.0
+  - x: 22.055
+    y: 20.531
+    z: 0.0
+  - x: 22.055
+    y: 25.776
+    z: 0.0
+  - x: 20.107
+    y: 25.776
+    z: 0.0
+  walls:
+  - start:
+      x: 22.055
+      y: 20.531
+      z: 0.0
+    end:
+      x: 22.055
+      y: 25.776
+      z: 0.0
+  - start:
+      x: 20.107
+      y: 25.776
+      z: 0.0
+    end:
+      x: 20.107
+      y: 20.531
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_03
+  description: Convex acoustic zone 3
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 26.351
+    y: 19.082
+    z: 0.0
+  - x: 27.8
+    y: 19.082
+    z: 0.0
+  - x: 27.8
+    y: 25.776
+    z: 0.0
+  - x: 26.351
+    y: 25.776
+    z: 0.0
+  walls:
+  - start:
+      x: 27.8
+      y: 19.082
+      z: 0.0
+    end:
+      x: 27.8
+      y: 25.776
+      z: 0.0
+  - start:
+      x: 26.351
+      y: 25.776
+      z: 0.0
+    end:
+      x: 26.351
+      y: 19.082
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_04
+  description: Convex acoustic zone 4
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 9.017
+    y: 19.082
+    z: 0.0
+  - x: 22.055
+    y: 19.082
+    z: 0.0
+  - x: 22.055
+    y: 20.531
+    z: 0.0
+  - x: 9.017
+    y: 20.531
+    z: 0.0
+  walls:
+  - start:
+      x: 22.055
+      y: 19.082
+      z: 0.0
+    end:
+      x: 22.055
+      y: 20.531
+      z: 0.0
+  - start:
+      x: 20.107
+      y: 20.531
+      z: 0.0
+    end:
+      x: 9.017
+      y: 20.531
+      z: 0.0
+  - start:
+      x: 9.017
+      y: 20.531
+      z: 0.0
+    end:
+      x: 9.017
+      y: 19.082
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_05
+  description: Convex acoustic zone 5
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 9.017
+    y: 18.033
+    z: 0.0
+  - x: 27.8
+    y: 18.033
+    z: 0.0
+  - x: 27.8
+    y: 19.082
+    z: 0.0
+  - x: 9.017
+    y: 19.082
+    z: 0.0
+  walls:
+  - start:
+      x: 12.264
+      y: 18.033
+      z: 0.0
+    end:
+      x: 27.8
+      y: 18.033
+      z: 0.0
+  - start:
+      x: 27.8
+      y: 18.033
+      z: 0.0
+    end:
+      x: 27.8
+      y: 19.082
+      z: 0.0
+  - start:
+      x: 26.351
+      y: 19.082
+      z: 0.0
+    end:
+      x: 22.055
+      y: 19.082
+      z: 0.0
+  - start:
+      x: 9.017
+      y: 19.082
+      z: 0.0
+    end:
+      x: 9.017
+      y: 18.033
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_06
+  description: Convex acoustic zone 6
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 9.017
+    y: 8.342
+    z: 0.0
+  - x: 12.264
+    y: 8.342
+    z: 0.0
+  - x: 12.264
+    y: 18.033
+    z: 0.0
+  - x: 9.017
+    y: 18.033
+    z: 0.0
+  walls:
+  - start:
+      x: 12.264
+      y: 8.342
+      z: 0.0
+    end:
+      x: 12.264
+      y: 18.033
+      z: 0.0
+  - start:
+      x: 9.017
+      y: 18.033
+      z: 0.0
+    end:
+      x: 9.017
+      y: 8.342
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_07
+  description: Convex acoustic zone 7
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 0.025
+    y: 6.394
+    z: 0.0
+  - x: 17.509
+    y: 6.394
+    z: 0.0
+  - x: 17.509
+    y: 8.342
+    z: 0.0
+  - x: 0.025
+    y: 8.342
+    z: 0.0
+  walls:
+  - start:
+      x: 3.971
+      y: 6.394
+      z: 0.0
+    end:
+      x: 13.563
+      y: 6.394
+      z: 0.0
+  - start:
+      x: 17.509
+      y: 6.394
+      z: 0.0
+    end:
+      x: 17.509
+      y: 8.342
+      z: 0.0
+  - start:
+      x: 17.509
+      y: 8.342
+      z: 0.0
+    end:
+      x: 12.264
+      y: 8.342
+      z: 0.0
+  - start:
+      x: 9.017
+      y: 8.342
+      z: 0.0
+    end:
+      x: 0.025
+      y: 8.342
+      z: 0.0
+  - start:
+      x: 0.025
+      y: 8.342
+      z: 0.0
+    end:
+      x: 0.025
+      y: 6.394
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_08
+  description: Convex acoustic zone 8
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 13.563
+    y: 1.998
+    z: 0.0
+  - x: 17.509
+    y: 1.998
+    z: 0.0
+  - x: 17.509
+    y: 6.394
+    z: 0.0
+  - x: 13.563
+    y: 6.394
+    z: 0.0
+  walls:
+  - start:
+      x: 17.509
+      y: 1.998
+      z: 0.0
+    end:
+      x: 17.509
+      y: 6.394
+      z: 0.0
+  - start:
+      x: 13.563
+      y: 6.394
+      z: 0.0
+    end:
+      x: 13.563
+      y: 1.998
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_09
+  description: Convex acoustic zone 9
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 0.025
+    y: 1.998
+    z: 0.0
+  - x: 3.971
+    y: 1.998
+    z: 0.0
+  - x: 3.971
+    y: 6.394
+    z: 0.0
+  - x: 0.025
+    y: 6.394
+    z: 0.0
+  walls:
+  - start:
+      x: 3.971
+      y: 1.998
+      z: 0.0
+    end:
+      x: 3.971
+      y: 6.394
+      z: 0.0
+  - start:
+      x: 0.025
+      y: 6.394
+      z: 0.0
+    end:
+      x: 0.025
+      y: 1.998
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}
+- name: zone_10
+  description: Convex acoustic zone 10
+  material:
+  - Common/Material/Porcelain_Tile_4
+  - {}
+  corners:
+  - x: 0.025
+    y: 0.0
+    z: 0.0
+  - x: 17.509
+    y: 0.0
+    z: 0.0
+  - x: 17.509
+    y: 1.998
+    z: 0.0
+  - x: 0.025
+    y: 1.998
+    z: 0.0
+  walls:
+  - start:
+      x: 0.025
+      y: 0.0
+      z: 0.0
+    end:
+      x: 17.509
+      y: 0.0
+      z: 0.0
+  - start:
+      x: 17.509
+      y: 0.0
+      z: 0.0
+    end:
+      x: 17.509
+      y: 1.998
+      z: 0.0
+  - start:
+      x: 13.563
+      y: 1.998
+      z: 0.0
+    end:
+      x: 3.971
+      y: 1.998
+      z: 0.0
+  - start:
+      x: 0.025
+      y: 1.998
+      z: 0.0
+    end:
+      x: 0.025
+      y: 0.0
+      z: 0.0
+  doors: []
+  elevators: []
+  entities:
+    static: []
+    dynamic: []
+  ceiling: false
+  ceiling_height: null
+  ceiling_cast_shadows: false
+  ceiling_material:
+  - Common/Material/Concrete_Smooth
+  - {}
+  wall_material:
+  - Common/Material/Marble
+  - {}

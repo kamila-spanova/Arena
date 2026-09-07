@@ -10,13 +10,9 @@ OUTPUT_REL='data/audio_train_set'
 SCENARIO_GLOB='*'
 WORLD_GLOB='*'
 MAX_SCENARIOS=0
-START_INDEX=1
-SHARD_INDEX=0
-SHARD_COUNT=1
 DURATION=30
 WALL_TIMEOUT=90
 READY_TIMEOUT=120
-EPISODE_FINALIZE_TIMEOUT=15
 SIMULATOR='gazebo'
 RUNTIME='auto'
 CONTAINER=''
@@ -37,15 +33,8 @@ DELETE_AFTER_UPLOAD=1
 UPLOAD_HELPER="${SCRIPT_DIR}/hf_finalize_upload.py"
 UPLOAD_PIDS=()
 UPLOAD_LOGS=()
-UPLOAD_WORLDS=()
-UPLOAD_SCENARIOS=()
-UPLOAD_INDEXES=()
 MAX_PARALLEL_UPLOADS=2
 UPLOAD_FAIL=0
-SCENARIO_FAIL=0
-REQUESTED_ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
-FAILED_SCENARIOS_FILE=''
-UNSUCCESSFUL_SCENARIOS_FILE=''
 
 usage() {
     cat <<'EOF'
@@ -67,13 +56,9 @@ Options:
   --scenario-glob GLOB    Scenario-directory glob (default: *, all scenarios)
   --world-glob GLOB       World-directory glob (default: *, all worlds)
   --max-scenarios N       Stop after N selected cases (default: 0, unlimited)
-  --start-index N         Skip global execution indices below N (default: 1)
-  --shard-index N         Run zero-based shard N (default: 0)
-  --shard-count N         Split the globally indexed scenario list into N shards (default: 1)
   --duration SEC          Required simulation-time audio duration (default: 30)
   --wall-timeout SEC      Per-capture wall-time watchdog (default: 90)
   --ready-timeout SEC     Simulator/audio startup timeout (default: 120)
-  --episode-finalize-timeout SEC  Wait for clean episode cancellation/finalization (default: 15)
   --sim NAME              Arena simulator backend (default: gazebo)
   --runtime MODE          auto, docker, or native (default: auto)
   --container NAME_OR_ID  Arena container (implies docker)
@@ -106,13 +91,9 @@ while (($#)); do
         --scenario-glob) SCENARIO_GLOB="${2:?missing value}"; shift 2 ;;
         --world-glob) WORLD_GLOB="${2:?missing value}"; shift 2 ;;
         --max-scenarios) MAX_SCENARIOS="${2:?missing value}"; shift 2 ;;
-        --start-index) START_INDEX="${2:?missing value}"; shift 2 ;;
-        --shard-index) SHARD_INDEX="${2:?missing value}"; shift 2 ;;
-        --shard-count) SHARD_COUNT="${2:?missing value}"; shift 2 ;;
         --duration) DURATION="${2:?missing value}"; shift 2 ;;
         --wall-timeout) WALL_TIMEOUT="${2:?missing value}"; shift 2 ;;
         --ready-timeout) READY_TIMEOUT="${2:?missing value}"; shift 2 ;;
-        --episode-finalize-timeout) EPISODE_FINALIZE_TIMEOUT="${2:?missing value}"; shift 2 ;;
         --sim) SIMULATOR="${2:?missing value}"; shift 2 ;;
         --runtime) RUNTIME="${2:?missing value}"; shift 2 ;;
         --container) CONTAINER="${2:?missing value}"; RUNTIME='docker'; shift 2 ;;
@@ -139,14 +120,9 @@ done
 [[ "$OUTPUT_REL" != /* && "$OUTPUT_REL" != *'..'* ]] || die '--output-relative must be a safe workspace-relative path'
 [[ "$OUTPUT_REL" == data || "$OUTPUT_REL" == data/* ]] || die '--output-relative must be below data/'
 [[ "$MAX_SCENARIOS" =~ ^[0-9]+$ ]] || die '--max-scenarios must be a non-negative integer'
-[[ "$START_INDEX" =~ ^[1-9][0-9]*$ ]] || die '--start-index must be a positive integer'
-[[ "$SHARD_INDEX" =~ ^[0-9]+$ ]] || die '--shard-index must be a non-negative integer'
-[[ "$SHARD_COUNT" =~ ^[1-9][0-9]*$ ]] || die '--shard-count must be a positive integer'
-((SHARD_INDEX < SHARD_COUNT)) || die '--shard-index must be smaller than --shard-count'
 is_number "$DURATION" || die '--duration must be numeric'
 is_number "$WALL_TIMEOUT" || die '--wall-timeout must be numeric'
 is_number "$READY_TIMEOUT" || die '--ready-timeout must be numeric'
-is_number "$EPISODE_FINALIZE_TIMEOUT" || die '--episode-finalize-timeout must be numeric'
 [[ -n "$PLAYBACK_DEVICE" ]] || die '--playback-device must be auto, none, or a device name'
 [[ "$MAX_PARALLEL_UPLOADS" =~ ^[1-9][0-9]*$ ]] || die '--max-parallel-uploads must be a positive integer'
 [[ -n "$SIMULATOR" ]] || die '--sim must not be empty'
@@ -185,8 +161,6 @@ if ((LIST_ONLY)); then
     execution_number=0
     for scenario_file in "${SCENARIO_FILES[@]}"; do
         execution_number=$((execution_number + 1))
-        ((execution_number >= START_INDEX)) || continue
-        (((execution_number - 1) % SHARD_COUNT == SHARD_INDEX)) || continue
         printf -v run_index '%04d' "$execution_number"
         scenario_dir="$(dirname -- "$scenario_file")"
         world_dir="$(dirname -- "$(dirname -- "$scenario_dir")")"
@@ -239,8 +213,8 @@ fi
 
 run_in_arena() {
     if [[ "$RUNTIME" == docker ]]; then
-        docker exec -e "ARENA_RECORDER_ROS_DOMAIN_ID=${REQUESTED_ROS_DOMAIN_ID}" -e "GZ_PARTITION=${GZ_PARTITION:-}" \
-            "$CONTAINER" bash --norc -c 'cd /opt/arena_ws && source ./source >/dev/null && export ROS_DOMAIN_ID="$ARENA_RECORDER_ROS_DOMAIN_ID" && "$@"' _ "$@"
+        docker exec -e "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}" -e "GZ_PARTITION=${GZ_PARTITION:-}" \
+            "$CONTAINER" bash --norc -c 'cd /opt/arena_ws && source ./source >/dev/null && "$@"' _ "$@"
     else
         (cd "$WORKSPACE_ROOT" && "$@")
     fi
@@ -335,65 +309,6 @@ done'
     fi
 }
 
-cancel_and_finalize_episode() {
-    local action_name="$1"
-    local cancel_service="${action_name}/_action/cancel_goal"
-    local cancel_type='action_msgs/srv/CancelGoal'
-    local cancel_request
-    local cancel_response=''
-    local deadline
-
-    # The recorder deliberately launches scenarios with
-    # task.scenario.linger_after_completion:=true.  wait_capture therefore
-    # stops after the requested synchronized capture duration while the
-    # RunEpisode goal may still be active.  The MCAP exporter requires a
-    # terminal EpisodeRecord, so cancel the live goal before shutting Arena
-    # down rather than killing the supervisor first.
-    cancel_request='{goal_info: {goal_id: {uuid: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, stamp: {sec: 0, nanosec: 0}}}'
-
-    # Do not probe this endpoint with `ros2 service type` before calling it.
-    # Action protocol services live below the hidden `_action` namespace and
-    # some ros2cli/RMW combinations do not report their type through the normal
-    # service-introspection path even though the action server is healthy.
-    # Call the standard CancelGoal endpoint directly instead.
-    note "finalizing episode: cancelling active RunEpisode goal"
-    cancel_response="$(
-        run_in_arena timeout 10 ros2 service call \
-            "$cancel_service" \
-            "$cancel_type" \
-            "$cancel_request" 2>&1 || true
-    )"
-
-    # CancelGoal return_code=0 means ERROR_NONE. This is also safe if the goal
-    # became terminal just before our request: Arena still gets the grace
-    # period below to flush its terminal EpisodeRecord to MCAP.
-    if [[ "$cancel_response" != *'return_code=0'* && "$cancel_response" != *'return_code: 0'* ]]; then
-        printf '%s\n' "$cancel_response" >&2
-        printf 'record_acoustics_dataset: visible action info follows:\n' >&2
-        run_in_arena ros2 action info "$action_name" 2>&1 >&2 || true
-        printf 'record_acoustics_dataset: hidden cancel endpoints follow:\n' >&2
-        run_in_arena ros2 service list --include-hidden-services 2>/dev/null \
-            | grep -F "${action_name}/_action/" >&2 || true
-        die 'RunEpisode cancellation was not accepted; local MCAP retained for inspection'
-    fi
-
-    deadline=$((SECONDS + ${EPISODE_FINALIZE_TIMEOUT%.*}))
-    while ((SECONDS <= deadline)); do
-        # Arena's evaluation recorder logs terminal episode records when the
-        # action reaches a terminal state.  Prefer that explicit signal when
-        # available, but do not require an exact logger wording across Arena
-        # versions.  The short grace period also lets queued recorder messages
-        # reach the MCAP writer before graceful supervisor shutdown.
-        if [[ -s "$launch_log" ]] && grep -Eqi 'terminal EpisodeRecord|EpisodeRecord.*(cancel|canceled|cancelled|complete|completed|terminal)|episode.*(cancel|canceled|cancelled|complete|completed).*record' "$launch_log"; then
-            note 'episode terminal record observed before shutdown'
-            return 0
-        fi
-        sleep 0.25
-    done
-
-    note "episode cancellation accepted; finalization grace period (${EPISODE_FINALIZE_TIMEOUT}s) elapsed"
-}
-
 cleanup() {
     local status=$?
     if [[ -n "$CAPTURE_PID" ]] && kill -0 "$CAPTURE_PID" 2>/dev/null; then kill "$CAPTURE_PID" 2>/dev/null || true; fi
@@ -405,25 +320,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$OUTPUT_ROOT"
-mkdir -p "$OUTPUT_ROOT/.failed_scenarios"
-if ((SHARD_COUNT > 1)); then
-    shard_suffix=".shard-${SHARD_INDEX}-of-${SHARD_COUNT}"
-else
-    shard_suffix=''
-fi
-FAILED_SCENARIOS_FILE="$OUTPUT_ROOT/failed_scenarios${shard_suffix}.tsv"
-if [[ ! -s "$FAILED_SCENARIOS_FILE" ]]; then
-    printf 'timestamp\texecution_index\tworld\tscenario\texit_code\tlog\n' >"$FAILED_SCENARIOS_FILE"
-fi
-UNSUCCESSFUL_SCENARIOS_FILE="$OUTPUT_ROOT/unsuccessful_scenarios${shard_suffix}.tsv"
-printf 'timestamp\texecution_index\tworld\tscenario\tphase\texit_code\tlog\treason\n' \
-    >"$UNSUCCESSFUL_SCENARIOS_FILE"
 if ((HF_UPLOAD)); then
     [[ -f "$UPLOAD_HELPER" ]] || die "upload helper not found: $UPLOAD_HELPER"
     [[ -n "${!HF_TOKEN_ENV:-}" ]] || die "$HF_TOKEN_ENV is not set; export a Hugging Face write token before recording"
     mkdir -p "$OUTPUT_ROOT/.upload_logs"
 fi
-note "runtime=$RUNTIME scenarios=${#SCENARIO_FILES[@]} shard=${SHARD_INDEX}/${SHARD_COUNT} duration=${DURATION}s simulation time output=$OUTPUT_ROOT"
+note "runtime=$RUNTIME scenarios=${#SCENARIO_FILES[@]} duration=${DURATION}s simulation time output=$OUTPUT_ROOT"
 
 # Clear graph entries left by a previously interrupted invocation before the
 # first exclusivity check. A real environment in this domain is rediscovered.
@@ -431,63 +333,20 @@ refresh_ros_discovery
 
 execution_number=0
 
-record_unsuccessful_scenario() {
-    local index="$1" world="$2" scenario="$3" phase="$4"
-    local exit_code="$5" log="$6" reason="$7"
-    reason="${reason//$'\t'/ }"
-    reason="${reason//$'\n'/ }"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$(date --iso-8601=seconds)" "$index" "$world" "$scenario" \
-        "$phase" "$exit_code" "$log" "$reason" \
-        >>"$UNSUCCESSFUL_SCENARIOS_FILE"
-}
-
-check_remote_with_backoff() {
-    local output='' status=0 attempt
-    for attempt in {1..6}; do
-        if output="$(python3 "$UPLOAD_HELPER" "$@" 2>&1)"; then
-            printf '%s\n' "$output"
-            return 0
-        else
-            status=$?
-        fi
-        if [[ "$output" == *'429 Client Error'* && "$attempt" -lt 6 ]]; then
-            note "Hugging Face rate limit reached; retrying remote check in 60s (attempt $attempt/6)"
-            sleep 60
-            continue
-        fi
-        printf '%s\n' "$output" >&2
-        return "$status"
-    done
-}
-
 wait_for_upload_slot() {
     ((${#UPLOAD_PIDS[@]} < MAX_PARALLEL_UPLOADS)) && return 0
     local pid="${UPLOAD_PIDS[0]}" log="${UPLOAD_LOGS[0]}"
-    local world="${UPLOAD_WORLDS[0]}" scenario="${UPLOAD_SCENARIOS[0]}"
-    local index="${UPLOAD_INDEXES[0]}"
     if ! wait "$pid"; then
         UPLOAD_FAIL=1
-        printf 'record_acoustics_dataset: ERROR: UPLOAD FAILED scenario=%s world=%s index=%s; local data retained. Log: %s\n' \
-            "$scenario" "$world" "$index" "$log" >&2
-        record_unsuccessful_scenario \
-            "$index" "$world" "$scenario" upload 1 "$log" \
-            'Hugging Face upload or remote verification failed; local data retained'
+        printf 'record_acoustics_dataset: ERROR: upload failed; local data retained. Log: %s\n' "$log" >&2
         [[ -s "$log" ]] && tail -n 80 "$log" >&2 || true
-    else
-        note "UPLOAD OK scenario=$scenario world=$world index=$index"
     fi
     UPLOAD_PIDS=("${UPLOAD_PIDS[@]:1}")
     UPLOAD_LOGS=("${UPLOAD_LOGS[@]:1}")
-    UPLOAD_WORLDS=("${UPLOAD_WORLDS[@]:1}")
-    UPLOAD_SCENARIOS=("${UPLOAD_SCENARIOS[@]:1}")
-    UPLOAD_INDEXES=("${UPLOAD_INDEXES[@]:1}")
 }
 
 for scenario_file in "${SCENARIO_FILES[@]}"; do
     execution_number=$((execution_number + 1))
-    ((execution_number >= START_INDEX)) || continue
-    (((execution_number - 1) % SHARD_COUNT == SHARD_INDEX)) || continue
     printf -v run_index '%04d' "$execution_number"
     scenario_dir="$(dirname -- "$scenario_file")"
     scenario_name="$(basename -- "$scenario_dir")"
@@ -505,20 +364,11 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
 
     if ((HF_UPLOAD)); then
         remote_prefix="scenarios/${world_name}/${artifact_prefix}"
-        if remote_state="$(check_remote_with_backoff --repo-id "$HF_REPO" \
+        remote_state="$(python3 "$UPLOAD_HELPER" --repo-id "$HF_REPO" \
             --remote-prefix "$remote_prefix" --token-env "$HF_TOKEN_ENV" \
             --world-name "$world_name" --scenario-name "$scenario_name" \
-            --execution-index "$execution_number" --check-remote)"; then
-            remote_check_status=0
-        else
-            remote_check_status=$?
-            UPLOAD_FAIL=1
-            record_unsuccessful_scenario \
-                "$run_index" "$world_name" "$scenario_name" upload \
-                "$remote_check_status" '' "could not check Hugging Face state for $remote_prefix"
-            note "UPLOAD CHECK FAILED scenario=$scenario_name world=$world_name index=$run_index; continuing"
-            continue
-        fi
+            --execution-index "$execution_number" --check-remote)" \
+            || die "could not check Hugging Face state for $remote_prefix"
         if [[ "$remote_state" == "EXISTS" && "$FORCE" -eq 0 ]]; then
             note "SKIP $run_name (already uploaded and finalized)"
             continue
@@ -540,12 +390,7 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
             if ((DELETE_AFTER_UPLOAD)); then upload_args+=(--delete-after-verify); fi
             if ! python3 "${upload_args[@]}" >"$upload_log" 2>&1; then
                 [[ -s "$upload_log" ]] && tail -n 80 "$upload_log" >&2 || true
-                UPLOAD_FAIL=1
-                record_unsuccessful_scenario \
-                    "$run_index" "$world_name" "$scenario_name" upload 1 \
-                    "$upload_log" 'Hugging Face retry failed; local data retained'
-                note "UPLOAD FAILED scenario=$scenario_name world=$world_name index=$run_index; local data retained. Log: $upload_log"
-                continue
+                die "upload retry failed; local data retained. Log: $upload_log"
             fi
             note "UPLOADED $run_name -> hf://datasets/${HF_REPO}/${remote_prefix}"
         else
@@ -553,14 +398,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
         fi
         continue
     fi
-    failure_log="${OUTPUT_ROOT}/.failed_scenarios/${world_name}__${artifact_prefix}.log"
-    set +e
-    (
-    set -Eeo pipefail
-    # Keep launch/capture PIDs local to this attempt. Any failure triggers the
-    # inherited cleanup trap without terminating the outer dataset loop.
-    trap cleanup EXIT
-
     existing_actions="$(episode_actions)"
     [[ -z "$existing_actions" ]] || die "another Arena environment is already running; stop it before recording: $existing_actions"
     if [[ -e "$run_host" && ("$FORCE" -eq 1 || "$RECOVER_INCOMPLETE" -eq 1) ]]; then
@@ -603,9 +440,9 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     )
     if [[ "$RUNTIME" == docker ]]; then
         SUPERVISOR_PID_FILE="/tmp/arena-acoustics-${BASHPID}.pid"
-        docker exec -e "ARENA_RECORDER_ROS_DOMAIN_ID=${REQUESTED_ROS_DOMAIN_ID}" -e "GZ_PARTITION=${GZ_PARTITION}" \
+        docker exec -e "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}" -e "GZ_PARTITION=${GZ_PARTITION}" \
             "$CONTAINER" bash --norc -c \
-            'cd /opt/arena_ws && source ./source >/dev/null && export ROS_DOMAIN_ID="$ARENA_RECORDER_ROS_DOMAIN_ID" && printf "%s\n" "$BASHPID" > "$1" && shift && exec python3 -m arena_bringup.supervisor "$@"' \
+            'cd /opt/arena_ws && source ./source >/dev/null && printf "%s\n" "$BASHPID" > "$1" && shift && exec python3 -m arena_bringup.supervisor "$@"' \
             _ "$SUPERVISOR_PID_FILE" "${launch_args[@]}" >"$launch_log" 2>&1 &
     else
         setsid python3 -m arena_bringup.supervisor "${launch_args[@]}" >"$launch_log" 2>&1 &
@@ -624,14 +461,14 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     rendered_live=0
     while ((SECONDS <= deadline)); do
         kill -0 "$LAUNCH_CLIENT_PID" 2>/dev/null || { tail -n 80 "$launch_log" >&2; die 'Arena exited during startup'; }
-        episode_action="$(run_in_arena timeout 5 ros2 action list 2>/dev/null | grep '/lifecycle/run_episode$' | head -n 1 || true)"
+        episode_action="$(run_in_arena ros2 action list 2>/dev/null | grep '/lifecycle/run_episode$' | head -n 1 || true)"
         if [[ -n "$episode_action" ]]; then
             env_namespace="${episode_action%/lifecycle/run_episode}"
-            raw_type="$(run_in_arena timeout 5 ros2 topic type "${env_namespace}/jackal/audio/raw_array" 2>/dev/null || true)"
-            rendered_type="$(run_in_arena timeout 5 ros2 topic type "${env_namespace}/jackal/audio/headphones/stereo" 2>/dev/null || true)"
-            map_type="$(run_in_arena timeout 5 ros2 topic type "${env_namespace}/map" 2>/dev/null || true)"
-            map_state="$(run_in_arena timeout 5 ros2 lifecycle get "${env_namespace}/map_server" 2>/dev/null || true)"
-            microphone_node="$(run_in_arena timeout 5 ros2 node list 2>/dev/null | grep -x "${env_namespace}/microphone_array_node" || true)"
+            raw_type="$(run_in_arena ros2 topic type "${env_namespace}/jackal/audio/raw_array" 2>/dev/null || true)"
+            rendered_type="$(run_in_arena ros2 topic type "${env_namespace}/jackal/audio/headphones/stereo" 2>/dev/null || true)"
+            map_type="$(run_in_arena ros2 topic type "${env_namespace}/map" 2>/dev/null || true)"
+            map_state="$(run_in_arena ros2 lifecycle get "${env_namespace}/map_server" 2>/dev/null || true)"
+            microphone_node="$(run_in_arena ros2 node list 2>/dev/null | grep -x "${env_namespace}/microphone_array_node" || true)"
             if [[ "$raw_type" == 'task_generator_msgs/msg/AudioFrame' && "$raw_live" -eq 0 ]] \
                 && run_in_arena timeout 3 ros2 topic echo --once "${env_namespace}/jackal/audio/raw_array" >/dev/null 2>&1; then
                 raw_live=1
@@ -687,12 +524,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     fi
     CAPTURE_PID=''
 
-    # wait_capture guarantees the requested synchronized audio duration, but
-    # the scenario is launched with linger_after_completion=true.  Explicitly
-    # cancel the active episode so Arena can write the terminal EpisodeRecord
-    # required by export_recording before the launch tree is stopped.
-    cancel_and_finalize_episode "$episode_action"
-
     stop_launch
     wait_for_environment_shutdown
 
@@ -707,25 +538,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
     if [[ "$SIMULATOR" == dummy ]]; then export_args+=(--basic-audio-pedestrians); fi
     run_in_arena python3 -m arena_simulation_setup.acoustics.export_recording "${export_args[@]}"
     [[ -s "$validation" ]] || die "export did not create $validation"
-    ) > >(tee "$failure_log") 2>&1
-    scenario_status=$?
-    set -e
-    LAUNCH_CLIENT_PID=''
-    CAPTURE_PID=''
-    if ((scenario_status != 0)); then
-        SCENARIO_FAIL=$((SCENARIO_FAIL + 1))
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$(date --iso-8601=seconds)" "$run_index" "$world_name" \
-            "$scenario_name" "$scenario_status" "$failure_log" \
-            >>"$FAILED_SCENARIOS_FILE"
-        record_unsuccessful_scenario \
-            "$run_index" "$world_name" "$scenario_name" recording \
-            "$scenario_status" "$failure_log" \
-            'simulation, capture, or export failed; local diagnostics retained'
-        note "FAILED $run_name (exit=$scenario_status); continuing. Log: $failure_log"
-        continue
-    fi
-    rm -f -- "$failure_log"
 
     if ((HF_UPLOAD)); then
         wait_for_upload_slot
@@ -748,9 +560,6 @@ for scenario_file in "${SCENARIO_FILES[@]}"; do
         python3 "${upload_args[@]}" >"$upload_log" 2>&1 &
         UPLOAD_PIDS+=("$!")
         UPLOAD_LOGS+=("$upload_log")
-        UPLOAD_WORLDS+=("$world_name")
-        UPLOAD_SCENARIOS+=("$scenario_name")
-        UPLOAD_INDEXES+=("$run_index")
         note "UPLOAD queued $run_name -> hf://datasets/${HF_REPO}/${remote_prefix}"
     fi
 
@@ -761,25 +570,14 @@ if ((HF_UPLOAD)); then
     for i in "${!UPLOAD_PIDS[@]}"; do
         pid="${UPLOAD_PIDS[$i]}"
         log="${UPLOAD_LOGS[$i]}"
-        world="${UPLOAD_WORLDS[$i]}"
-        scenario="${UPLOAD_SCENARIOS[$i]}"
-        index="${UPLOAD_INDEXES[$i]}"
         if ! wait "$pid"; then
             UPLOAD_FAIL=1
-            printf 'record_acoustics_dataset: ERROR: UPLOAD FAILED scenario=%s world=%s index=%s; local data retained. Log: %s\n' \
-                "$scenario" "$world" "$index" "$log" >&2
-            record_unsuccessful_scenario \
-                "$index" "$world" "$scenario" upload 1 "$log" \
-                'Hugging Face upload or remote verification failed; local data retained'
+            printf 'record_acoustics_dataset: ERROR: upload failed; local data retained. Log: %s\n' "$log" >&2
             [[ -s "$log" ]] && tail -n 80 "$log" >&2 || true
-        else
-            note "UPLOAD OK scenario=$scenario world=$world index=$index"
         fi
     done
 fi
 
-if ((UPLOAD_FAIL != 0 || SCENARIO_FAIL != 0)); then
-    die "recording/upload failures occurred; see $UNSUCCESSFUL_SCENARIOS_FILE"
-fi
+((UPLOAD_FAIL == 0)) || die 'one or more Hugging Face uploads failed'
 trap - EXIT INT TERM
 note 'all selected scenarios have valid synchronized recordings and completed uploads'

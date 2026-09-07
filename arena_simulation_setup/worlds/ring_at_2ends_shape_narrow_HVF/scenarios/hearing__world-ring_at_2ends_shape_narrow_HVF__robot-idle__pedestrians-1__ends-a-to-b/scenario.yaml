@@ -1,0 +1,39 @@
+robots:
+- start:
+  - 6.7
+  - 0.975
+  - 1.503103
+  phases: []
+static: []
+dynamic:
+- name: ped_1
+  model: female_adult_medical_01
+  pose:
+  - 21.45
+  - 25.825
+  - -0.14889
+  agent:
+    agent_type: adult
+    desired_velocity: 1.2
+  waypoints:
+  - - 21.45
+    - 25.825
+    - 0.0
+  - - 24.45
+    - 25.375
+    - 0.0
+  - - 24.45
+    - 19.875
+    - 0.0
+  - - 18.3
+    - 19.075
+    - 0.0
+  - - 16.15
+    - 8.225
+    - 0.0
+  - - 7.1
+    - 6.875
+    - 0.0
+  - - 6.7
+    - 0.975
+    - 0.0

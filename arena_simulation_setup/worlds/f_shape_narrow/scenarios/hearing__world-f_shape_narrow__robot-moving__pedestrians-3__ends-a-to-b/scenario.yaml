@@ -1,0 +1,86 @@
+robots:
+- start:
+  - 7.85
+  - 6.7
+  - 3.111972
+  phases:
+  - goto:
+    - 1.1
+    - 6.9
+    - 3.111972
+  - goto:
+    - 1.1
+    - 12.35
+    - 1.570796
+  - goto:
+    - 8.7
+    - 12.55
+    - 0.02631
+static: []
+dynamic:
+- name: ped_1
+  model: female_adult_medical_01
+  pose:
+  - 8.7
+  - 12.55
+  - -3.115283
+  agent:
+    agent_type: adult
+    desired_velocity: 1.2
+  waypoints:
+  - - 8.7
+    - 12.55
+    - 0.0
+  - - 1.1
+    - 12.35
+    - 0.0
+  - - 1.1
+    - 6.9
+    - 0.0
+  - - 7.85
+    - 6.7
+    - 0.0
+- name: ped_2
+  model: female_adult_medical_01
+  pose:
+  - 7.9003
+  - 12.529
+  - -3.115283
+  agent:
+    agent_type: adult
+    desired_velocity: 1.2
+  waypoints:
+  - - 7.9003
+    - 12.529
+    - 0.0
+  - - 1.1
+    - 12.35
+    - 0.0
+  - - 1.1
+    - 6.9
+    - 0.0
+  - - 7.85
+    - 6.7
+    - 0.0
+- name: ped_3
+  model: female_adult_medical_01
+  pose:
+  - 7.1006
+  - 12.5079
+  - -3.115283
+  agent:
+    agent_type: adult
+    desired_velocity: 1.2
+  waypoints:
+  - - 7.1006
+    - 12.5079
+    - 0.0
+  - - 1.1
+    - 12.35
+    - 0.0
+  - - 1.1
+    - 6.9
+    - 0.0
+  - - 7.85
+    - 6.7
+    - 0.0
